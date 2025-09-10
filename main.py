@@ -1,0 +1,88 @@
+import asyncio
+import threading
+import signal
+import sys
+import os
+from pathlib import Path
+from data_handler import start_binance_websocket, fetch_fivesec_historical_data
+from fivesec_dashboard import start_fivesec_dash
+from logger import setup_logger
+from config_manager import load_config, load_environment_config
+from pathlib import Path
+
+# Установить корневую директорию проекта
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))  # Корень проекта
+os.chdir(os.path.dirname(os.path.abspath(__file__)))  # Текущая директория fivesec_app
+
+config = load_config()
+env_config = load_environment_config()
+logger = setup_logger(log_dir=os.path.join(ROOT_DIR, "logs"))
+RESTART_FLAG = Path(os.path.join(ROOT_DIR, "fivesec_restart.flag"))
+
+def signal_handler(sig, frame):
+    """Обработчик сигналов завершения"""
+    logger.info(f"Received signal {sig}, shutting down")
+    RESTART_FLAG.touch()
+    sys.exit(0)
+
+def run_websocket():
+    """Запуск WebSocket в отдельном потоке"""
+    try:
+        logger.info("Starting WebSocket")
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        import data_handler
+        data_handler.MAIN_LOOP = loop  # <--- сохраняем loop для stop/resume
+
+        loop.run_until_complete(start_binance_websocket(ROOT_DIR))
+    except Exception as e:
+        logger.error(f"WebSocket thread error: {e}", exc_info=True)
+        RESTART_FLAG.touch()
+        sys.exit(1)
+
+
+def run_fivesec_dash():
+    """Запуск Dash сервера"""
+    try:
+        logger.info("Starting 5-second Dash server")
+        start_fivesec_dash()
+    except Exception as e:
+        logger.error(f"5-second Dash thread error: {e}", exc_info=True)
+        RESTART_FLAG.touch()
+        sys.exit(1)
+
+def main():
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    if RESTART_FLAG.exists():
+        RESTART_FLAG.unlink()
+        logger.info("Restart flag deleted on startup")
+        
+    logger.info("Starting 5-second application")
+
+    # Загрузка исторических данных
+    try:
+        logger.info("Fetching historical data")
+        asyncio.run(fetch_fivesec_historical_data())
+    except Exception as e:
+        logger.error(f"Error fetching historical data: {e}", exc_info=True)
+
+    # Запуск потоков
+    websocket_thread = threading.Thread(target=run_websocket, daemon=True, name="WebSocketThread")
+    dash_thread = threading.Thread(target=run_fivesec_dash, daemon=True, name="DashThread")
+    websocket_thread.start()
+    dash_thread.start()
+
+    # Главный поток ожидает завершения
+    try:
+        websocket_thread.join()
+        dash_thread.join()
+    except KeyboardInterrupt:
+        logger.info("Main thread received KeyboardInterrupt")
+        RESTART_FLAG.touch()
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()

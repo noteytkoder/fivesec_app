@@ -1,0 +1,26 @@
+app_env: dev2
+auth:
+  password: qwerty63
+  username: admin
+data:
+  buffer_size: 10000
+  csv_write_interval: 30
+  download_range: 1hour
+  fivesec_train_interval: 60
+  min_records: 60
+model:
+  fivesec_max_depth: 25
+  fivesec_n_estimators: 250
+  fivesec_train_window_seconds: 7200
+  min_fivesec_candles: 1
+  min_samples_leaf: 1
+  min_samples_split: 2
+timezone: Europe/Moscow
+visual:
+  error_band_color: rgba(255,165,0,0.2)
+  error_band_min: 10
+  error_band_multiplier: 1.5
+  predicted_price_color: orange
+  real_price_color: blue
+  show_error_band: true
+  update_interval: 1000
