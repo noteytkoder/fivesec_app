@@ -15,7 +15,8 @@ import os
 from model import train_fivesec_model
 
 config = load_config()
-logger = setup_logger(log_dir=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"))
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__)) 
+logger = setup_logger(log_dir=os.path.join(ROOT_DIR, "logs"))
 buffer_lock = Lock()
 fivesec_buffer = deque(maxlen=config["data"]["buffer_size"])
 fivesec_predictions = deque(maxlen=config["data"]["buffer_size"])
@@ -225,7 +226,7 @@ async def consumer_loop(raw_queue):
 
 async def fivesec_prediction_loop(root_dir):
     """Цикл предсказаний для 5-секундной модели"""
-    from .model import predict_fivesec
+    from model import predict_fivesec
     global fivesec_predictions, last_csv_write_time
     logger.info("fivesec_prediction_loop started")
     predictions_logger = setup_predictions_logger(log_dir=os.path.join(root_dir, "logs"))

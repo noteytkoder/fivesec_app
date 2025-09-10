@@ -1,0 +1,2 @@
+timestamp,actual_price,fivesec_pred,fivesec_error,fivesec_pred_time,fivesec_change_pct,fivesec_actual_price
+2025-09-10 19:41:46.865889+03:00,113662.23,113663.55161863261,,2025-09-10 19:41:51.865889+03:00,0.0011627597246835414,

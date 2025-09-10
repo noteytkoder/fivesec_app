@@ -11,8 +11,7 @@ from config_manager import load_config, load_environment_config
 from pathlib import Path
 
 # Установить корневую директорию проекта
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))  # Корень проекта
-os.chdir(os.path.dirname(os.path.abspath(__file__)))  # Текущая директория fivesec_app
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 config = load_config()
 env_config = load_environment_config()

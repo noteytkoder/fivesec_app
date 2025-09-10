@@ -2,8 +2,9 @@ from pathlib import Path
 import subprocess, time, os
 from logger import setup_logger
 
-logger = setup_logger(log_dir=os.path.join(os.path.dirname(__file__), "logs"))
-RESTART_FLAG = Path(os.path.join(os.path.dirname(__file__), "fivesec_restart.flag"))
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+RESTART_FLAG = Path(os.path.join(ROOT_DIR, "fivesec_restart.flag"))
+logger = setup_logger(log_dir=os.path.join(ROOT_DIR, "logs"))
 
 def run():
     project_root = os.path.dirname(__file__)

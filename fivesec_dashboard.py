@@ -20,9 +20,8 @@ cached_mae_10min = None
 config = load_config()
 env_name = config["app_env"]
 env_config = load_environment_config()
-logger = setup_logger(log_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs"))
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-print(ROOT_DIR)
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+logger = setup_logger(log_dir=os.path.join(ROOT_DIR, "logs"))
 RESTART_FLAG = Path(os.path.join(ROOT_DIR, "fivesec_restart.flag"))
 APP_START_TIME = time.time()
 cached_df = None
