@@ -24,10 +24,12 @@ fivesec_prediction_file_lock = Lock()
 last_fivesec_train_time = time.time()
 cached_processed_df = None
 last_buffer_hash = None
-last_csv_write_time = 0  # Для отслеживания времени последней записи в CSV
+last_csv_write_time = 0
+cached_mae_10min = None
+cached_trend_accuracy_10min = None  # Новое: кэш средней точности тренда за 10 мин
 
 MAIN_LOOP = None
-SYSTEM_STATE = "RUNNING"   # или "STOPPED"
+SYSTEM_STATE = "RUNNING"
 INTENTIONAL_STOP = False
 RUNNING_TASKS = []
 RUNNING_TASKS_LOCK = Lock()
@@ -225,9 +227,9 @@ async def consumer_loop(raw_queue):
             logger.error(f"[consumer] Error: {e}")
 
 async def fivesec_prediction_loop(root_dir):
-    """Цикл предсказаний для 5-секундной модели"""
+    """Цикл предсказаний для 5-секундной модели (с метрикой точности тренда)"""
     from model import predict_fivesec
-    global fivesec_predictions, last_csv_write_time
+    global fivesec_predictions, last_csv_write_time, cached_trend_accuracy_10min
     logger.info("fivesec_prediction_loop started")
     predictions_logger = setup_predictions_logger(log_dir=os.path.join(root_dir, "logs"))
     interval = "5s"
@@ -240,13 +242,15 @@ async def fivesec_prediction_loop(root_dir):
 
     os.makedirs(os.path.join(root_dir, "logs"), exist_ok=True)
     try:
+        # Инициализируем CSV с новыми колонками, включая поля тренда
         if os.path.exists(csv_file_path):
             os.remove(csv_file_path)
             logger.info(f"Removed existing fivesec_predictions.csv at {csv_file_path}")
         with fivesec_prediction_file_lock:
             pd.DataFrame(columns=[
-                "timestamp", "actual_price", "fivesec_pred", "fivesec_error",
-                "fivesec_pred_time", "fivesec_change_pct", "fivesec_actual_price"
+                "timestamp", "actual_price", "current_close", "fivesec_pred", "fivesec_change_pct",
+                "fivesec_pred_time", "fivesec_actual_price", "fivesec_error",
+                "fivesec_trend_pred", "fivesec_trend_actual", "fivesec_trend_accuracy"
             ]).to_csv(csv_file_path, index=False, encoding='utf-8')
             logger.info(f"Initialized new fivesec_predictions.csv at {csv_file_path}")
     except Exception as e:
@@ -272,7 +276,7 @@ async def fivesec_prediction_loop(root_dir):
                     await asyncio.sleep(wait_seconds)
                     continue
                 latest_row = df.iloc[-1]
-                actual_price = latest_row["close"]
+                current_close = latest_row["close"]
                 features = latest_row[["close", "rsi", "sma", "volume", "log_volume",
                                       "close_lag_1", "close_lag_2", "close_lag_3",
                                       "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
@@ -287,23 +291,28 @@ async def fivesec_prediction_loop(root_dir):
 
             pred_timestamp = pd.Timestamp.now(tz=msk_tz)
             fivesec_pred_time = pred_timestamp + pd.Timedelta(seconds=5)
-            fivesec_change_pct = ((fivesec_prediction - actual_price) / actual_price * 100) if actual_price > 0 else 0
+            fivesec_change_pct = ((fivesec_prediction - current_close) / current_close * 100) if current_close > 0 else 0
             fivesec_change_str = f"{fivesec_change_pct:+.2f}%"
 
             predictions_logger.info(
-                f"время={pred_timestamp}, цена={actual_price:.4f}, "
+                f"время={pred_timestamp}, цена={current_close:.4f}, "
                 f"прогноз_на_5сек={fivesec_prediction:.4f}, целевое_время_5сек={fivesec_pred_time.strftime('%Y-%m-%d %H:%M:%S%z')}, "
                 f"отклонение_5сек={fivesec_change_str}"
             )
 
+            # Добавляем поля тренда: предсказанное направление пока None (будет вычислено в update_fivesec_errors_loop)
             prediction_record = {
                 "timestamp": pred_timestamp,
-                "actual_price": actual_price,
+                "actual_price": current_close,
+                "current_close": current_close,
                 "fivesec_pred": fivesec_prediction,
                 "fivesec_error": None,
                 "fivesec_pred_time": fivesec_pred_time,
                 "fivesec_change_pct": fivesec_change_pct,
-                "fivesec_actual_price": None
+                "fivesec_actual_price": None,
+                "fivesec_trend_pred": None,
+                "fivesec_trend_actual": None,
+                "fivesec_trend_accuracy": None
             }
             with fivesec_prediction_file_lock:
                 fivesec_predictions.append(prediction_record)
@@ -388,79 +397,88 @@ async def fivesec_retrain_loop():
             await asyncio.sleep(train_interval)
 
 async def update_fivesec_errors_loop(root_dir):
-    """Обновление ошибок для 5-секундных прогнозов"""
+    """Обновление ошибок и расчёт метрик из всего буфера предсказаний."""
     logger.info("update_fivesec_errors_loop started")
     msk_tz = pytz.timezone(config.get("timezone", "Europe/Moscow"))
     tolerance_seconds = {"fivesec": 10}
-    global fivesec_predictions
-    last_data_buffer = None
-    data_df = None
+    global fivesec_predictions, cached_mae_10min, cached_trend_accuracy_10min
     csv_file_path = os.path.join(root_dir, "logs", "fivesec_predictions.csv")
 
     while True:
         try:
-            if not fivesec_predictions:
-                await asyncio.sleep(5)
-                continue
-
-            with buffer_lock:
-                current_data_buffer = list(fivesec_buffer)
-                if current_data_buffer != last_data_buffer:
-                    data_df = pd.DataFrame(current_data_buffer)
-                    data_df["timestamp"] = pd.to_datetime(data_df["timestamp"])
-                    data_df = data_df.sort_values("timestamp")
-                    last_data_buffer = current_data_buffer
-
-            if data_df is None or data_df.empty:
-                await asyncio.sleep(5)
-                continue
-
+            # --- расчёт ошибок для тех, у кого ещё нет actual ---
             now = pd.Timestamp.now(tz=msk_tz)
-            updated_count = 0
+            with buffer_lock:
+                data_df = pd.DataFrame(list(fivesec_buffer))
+            if data_df.empty:
+                await asyncio.sleep(5)
+                continue
+            data_df["timestamp"] = pd.to_datetime(data_df["timestamp"]).dt.tz_convert(msk_tz)
+            data_df = data_df.sort_values("timestamp")
+
             pending_predictions = [p for p in fivesec_predictions if p.get("fivesec_actual_price") is None]
-
             for prediction in pending_predictions:
-                for pred_type in ["fivesec"]:
-                    actual_col = f"{pred_type}_actual_price"
-                    error_col = f"{pred_type}_error"
-                    pred_time_col = f"{pred_type}_pred_time"
-                    pred_value_col = f"{pred_type}_pred"
+                pred_time = prediction.get("fivesec_pred_time")
+                if not pred_time:
+                    continue
+                pred_time = pd.to_datetime(pred_time).tz_convert(msk_tz)
+                if pred_time > now:
+                    continue
+                idx = data_df["timestamp"].searchsorted(pred_time)
+                if idx == 0 or idx == len(data_df):
+                    continue
+                candidates = data_df.iloc[max(0, idx - 1):idx + 1]
+                time_diff = (candidates["timestamp"] - pred_time).abs()
+                closest_idx = time_diff.idxmin()
+                if pd.isna(time_diff.min()) or time_diff.min().total_seconds() > tolerance_seconds["fivesec"]:
+                    continue
+                actual_price = data_df.loc[closest_idx, "close"]
+                prediction["fivesec_actual_price"] = actual_price
+                prediction["fivesec_error"] = abs(actual_price - prediction["fivesec_pred"])
+                # тренд
+                current_close = prediction.get("current_close")
+                if current_close is not None:
+                    pred_value = prediction["fivesec_pred"]
+                    pred_dir = 1 if pred_value > current_close else (-1 if pred_value < current_close else 0)
+                    act_dir = 1 if actual_price > current_close else (-1 if actual_price < current_close else 0)
+                    prediction["fivesec_trend_pred"] = pred_dir
+                    prediction["fivesec_trend_actual"] = act_dir
+                    prediction["fivesec_trend_accuracy"] = 1 if pred_dir == act_dir else 0
 
-                    if prediction.get(actual_col) is not None:
-                        continue
+            # --- пересчёт агрегатов каждый раз ---
+            pred_df = pd.DataFrame(list(fivesec_predictions))
+            if not pred_df.empty:
+                pred_df["timestamp"] = pd.to_datetime(pred_df["timestamp"])
+                ten_min_ago = pd.Timestamp.now(tz=msk_tz) - pd.Timedelta(minutes=10)
+                recent_preds = pred_df[pred_df["timestamp"] >= ten_min_ago]
+                if not recent_preds.empty:
+                    # mae
+                    if "fivesec_error" in recent_preds:
+                        valid_err = recent_preds["fivesec_error"].dropna()
+                        cached_mae_10min = valid_err.mean() if not valid_err.empty else None
+                    # trend acc
+                    if "fivesec_trend_accuracy" in recent_preds:
+                        valid_trend = recent_preds["fivesec_trend_accuracy"].dropna()
+                        cached_trend_accuracy_10min = valid_trend.mean() * 100.0 if not valid_trend.empty else None
+                else:
+                    cached_mae_10min = None
+                    cached_trend_accuracy_10min = None
 
-                    pred_time = prediction.get(pred_time_col)
-                    if pred_time is None:
-                        continue
+                logger.debug(
+                    f"Recalc metrics: preds={len(pred_df)}, recent={len(recent_preds)}, "
+                    f"MAE10={cached_mae_10min}, TrendAcc10={cached_trend_accuracy_10min}"
+                )
 
-                    pred_time = pd.to_datetime(pred_time).tz_convert(msk_tz)
-                    if pred_time > now:
-                        continue
-
-                    idx = data_df["timestamp"].searchsorted(pred_time)
-                    if idx == 0 or idx == len(data_df):
-                        continue
-
-                    candidates = data_df.iloc[max(0, idx-1):idx+1]
-                    time_diff = (candidates["timestamp"] - pred_time).abs()
-                    min_diff = time_diff.min()
-                    if pd.isna(min_diff) or min_diff.total_seconds() > tolerance_seconds[pred_type]:
-                        continue
-
-                    closest_idx = time_diff.idxmin()
-                    actual_price = data_df.loc[closest_idx, "close"]
-
-                    prediction[actual_col] = actual_price
-                    prediction[error_col] = abs(actual_price - prediction[pred_value_col])
-                    updated_count += 1
-
-            if updated_count > 0:
-                logger.debug(f"update_fivesec_errors_loop: updated {updated_count} predictions in memory")
+                # перезапись CSV
+                with fivesec_prediction_file_lock:
+                    pred_df.to_csv(csv_file_path, mode='w', index=False, encoding='utf-8')
 
             await asyncio.sleep(5)
+
         except Exception as e:
             logger.error(f"Error in update_fivesec_errors_loop: {e}", exc_info=True)
             await asyncio.sleep(5)
+
 
 async def _spawn_all_tasks(root_dir):
     """Создаёт все фоновые задачи и регистрирует их"""

@@ -17,7 +17,8 @@
             <th>Время</th>
             <th>Цена</th>
             <th>Прогноз 5 сек (%)</th>
-            <th>MAE (10 мин)</th>
+            <th>Ошибка 5 сек (10 мин)</th>
+            <th>Trend Acc (10 мин)</th>
           </tr>
         </thead>
         <tbody id="logs">
@@ -27,10 +28,13 @@
     </div>
   </div>
   <script>
+    // Подтягиваем таблицу с endpoint'a /logs/fivesec_predictions (как у тебя)
     let refreshTimer = setInterval(function(){
       $.get('/logs/fivesec_predictions', function(data) {
         const newLogs = $(data).find('#logs').html();
         $('#logs').html(newLogs);
+      }).fail(function() {
+        console.warn('Не удалось получить логи');
       });
     }, 1000);
   </script>

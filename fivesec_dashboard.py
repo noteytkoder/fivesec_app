@@ -16,7 +16,9 @@ from logger import setup_logger
 from flask import Response
 from data_handler import stop_system, resume_system
 
+# В начале файла: убедись, что объявлены обе кэши
 cached_mae_10min = None
+cached_trend_accuracy_10min = None
 config = load_config()
 env_name = config["app_env"]
 env_config = load_environment_config()
@@ -597,46 +599,64 @@ def serve_predictions_log():
 
 @dash_app.server.route(env_config[env_name]["table_endpoint"], methods=['GET'])
 def serve_fivesec_predictions_table():
-    """Возвращает HTML-таблицу с последней записью и MAE(10 мин) из памяти"""
+    """
+    HTML-таблица: последняя запись + моментальный MAE(10 мин) + TrendAcc(10 мин)
+    (колонка «Точность тренда» убрана)
+    """
     try:
-        global cached_mae_10min
         with fivesec_prediction_file_lock:
             if not fivesec_predictions:
-                logger.error("fivesec_predictions deque is empty")
                 return Response("Логи отсутствуют", status=404, mimetype='text/plain')
 
             pred_df = pd.DataFrame(list(fivesec_predictions))
             if pred_df.empty:
-                logger.error("Converted predictions DataFrame is empty")
                 return Response("Логи отсутствуют", status=404, mimetype='text/plain')
 
             last_pred = pred_df.iloc[-1]
 
+        # --- агрегаты за 10 минут ---
+        pred_df["timestamp"] = pd.to_datetime(pred_df["timestamp"])
+        tz = pred_df["timestamp"].dt.tz
+        now_ts = pd.Timestamp.now(tz=tz) if tz is not None else pd.Timestamp.now()
+        ten_min_ago = now_ts - pd.Timedelta(minutes=10)
+        recent_preds = pred_df[pred_df["timestamp"] >= ten_min_ago]
+
+        mae_10min = None
+        trend_acc_10min = None
+        if not recent_preds.empty:
+            if "fivesec_error" in recent_preds:
+                valid_err = pd.to_numeric(recent_preds["fivesec_error"], errors="coerce").dropna()
+                if not valid_err.empty:
+                    mae_10min = valid_err.mean()
+            if "fivesec_trend_accuracy" in recent_preds:
+                valid_trend = pd.to_numeric(recent_preds["fivesec_trend_accuracy"], errors="coerce").dropna()
+                if not valid_trend.empty:
+                    trend_acc_10min = valid_trend.mean() * 100.0
+
+        # --- данные самой свежей записи ---
         timestamp = pd.to_datetime(last_pred['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
-        actual_price = round(float(last_pred['actual_price']), 4)
-        fivesec_pred = round(float(last_pred['fivesec_pred']), 4)
-        fivesec_change_str = f"{last_pred['fivesec_change_pct']:+.4f}"
-        fivesec_pred_time = pd.to_datetime(last_pred['fivesec_pred_time']).strftime('%Y-%m-%d %H:%M:%S')
+        actual_price = float(last_pred.get('actual_price', 0.0))
+        fivesec_pred = float(last_pred.get('fivesec_pred', 0.0))
+        fivesec_change_str = f"{last_pred.get('fivesec_change_pct', 0.0):+.4f}"
+        fivesec_pred_time = pd.to_datetime(last_pred.get('fivesec_pred_time')).strftime('%Y-%m-%d %H:%M:%S')
 
-        error_val = last_pred.get('fivesec_error', None)
-        try:
-            error_float = float(error_val)
-            if pd.isna(error_float):
-                fivesec_error_str = ""
-            else:
-                fivesec_error_str = f"{error_float:.4f}"
-        except (ValueError, TypeError):
-            fivesec_error_str = ""
 
-        mae_10min_str = f"{cached_mae_10min:.4f}" if cached_mae_10min is not None else "..."
-        logger.debug(f"MAE(10min) for table: {mae_10min_str}")
+        mae_10min_str = f"{mae_10min:.4f}" if mae_10min is not None else "..."
+        trend_acc_10min_str = f"{trend_acc_10min:.2f}" if trend_acc_10min is not None else "..."
 
+        logger.debug(
+            f"Table metrics: rows={len(pred_df)}, recent={len(recent_preds)}, "
+            f"MAE10={mae_10min_str}, TrendAcc10={trend_acc_10min_str}"
+        )
+
+        # --- рендер (без колонки Точность тренда) ---
         table_rows = f"""
             <tr>
                 <td>{timestamp}</td>
                 <td>{actual_price:.4f}</td>
                 <td>{fivesec_pred:.4f} ({fivesec_change_str})<br><small>{fivesec_pred_time}</small></td>
                 <td>{mae_10min_str}</td>
+                <td>{trend_acc_10min_str}%</td>
             </tr>
         """
 
@@ -645,12 +665,14 @@ def serve_fivesec_predictions_table():
             template = f.read()
 
         html_content = template.replace('{{TABLE_ROWS}}', table_rows)
-
         return Response(html_content, mimetype='text/html')
 
     except Exception as e:
         logger.error(f"Error serving fivesec predictions: {e}", exc_info=True)
         return Response(f"Ошибка: {str(e)}", status=500, mimetype='text/plain')
+
+
+
     
 @callback(
     Output("stop-btn", "n_clicks"),
