@@ -7,7 +7,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from .config import logger, MAIN_LOOP
+from .config import logger
 from . import config
 
 from .binance_api import producer_ws, consumer_loop
@@ -15,8 +15,7 @@ from .prediction_loop import fivesec_prediction_loop
 from .retrain_loop import fivesec_retrain_loop
 from .errors_loop import update_fivesec_errors_loop
 
-# Глобальные переменные для управления
-# MAIN_LOOP = None
+MAIN_LOOP = None
 SYSTEM_STATE = "RUNNING"
 INTENTIONAL_STOP = False
 RUNNING_TASKS = []
@@ -24,17 +23,25 @@ RUNNING_TASKS_LOCK = asyncio.Lock()
 ACTIVE_QUEUE = None
 
 
-def stop_system():
-    global MAIN_LOOP
-    if MAIN_LOOP is None:
-        raise RuntimeError("Main loop not set")
-    
+
 def set_main_loop(loop):
-    """
-    Сохраняет ссылку на основной asyncio loop для запуска/остановки задач.
-    """
     global MAIN_LOOP
     MAIN_LOOP = loop
+    logger.info(f"MAIN_LOOP set: {MAIN_LOOP}")
+
+def stop_system():
+    """
+    Синхронный вызов остановки системы из другого потока.
+    """
+    global MAIN_LOOP
+    logger.info(f"stop_system called, MAIN_LOOP={MAIN_LOOP}")
+    if MAIN_LOOP is None:
+        raise RuntimeError("Main loop not set")
+    # ставим корутину в очередь
+    asyncio.run_coroutine_threadsafe(_stop_system_async(), MAIN_LOOP)
+
+
+
 
 async def _spawn_all_tasks(root_dir):
     """

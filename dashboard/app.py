@@ -14,7 +14,7 @@ def create_dash_app():
     config = load_config()
     env_name = config.get("app_env")
     env_conf = load_environment_config()
-    ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..")) # тут мб не нужно на шаг выше, но хз
     logger = setup_logger(log_dir=os.path.join(ROOT_DIR, "logs"))
 
     dash_app = Dash(__name__, assets_folder="static")

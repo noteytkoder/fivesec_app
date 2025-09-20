@@ -20,6 +20,3 @@ logger = setup_logger(log_dir=LOGS_DIR)
 # Часовой пояс и интервалы
 MSK_TZ = pytz.timezone(config.get("timezone", "Europe/Moscow"))
 INTERVAL_SECONDS = {"1s": 1, "5s": 5}
-
-# в начале файла
-MAIN_LOOP = None  # общий объект

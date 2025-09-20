@@ -29,20 +29,23 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 def run_websocket():
-    """Запуск WebSocket в отдельном потоке"""
+    logger.info("Starting WebSocket")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    from data_handler import system_control
+    system_control.set_main_loop(loop)
+
+    # стартуем корутину
+    loop.create_task(system_control.start_binance_websocket(ROOT_DIR))
+
     try:
-        logger.info("Starting WebSocket")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        import data_handler
-        data_handler.MAIN_LOOP = loop  # сохраняем loop для stop/resume
-
-        loop.run_until_complete(start_binance_websocket(ROOT_DIR))
+        loop.run_forever()  # а не run_until_complete
     except Exception as e:
         logger.error(f"WebSocket thread error: {e}", exc_info=True)
         RESTART_FLAG.touch()
         sys.exit(1)
+
 
 def run_fivesec_dash():
     """Запуск Dash сервера с новой структурой"""
