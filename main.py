@@ -4,11 +4,15 @@ import signal
 import sys
 import os
 from pathlib import Path
-from data_handler import start_binance_websocket, fetch_fivesec_historical_data
-from fivesec_dashboard import start_fivesec_dash
+
+from data_handler import (
+    start_binance_websocket,
+    fetch_fivesec_historical_data,
+    fivesec_buffer,
+)
+from dashboard import create_dash_app, register_online_callbacks  # новый импорт
 from logger import setup_logger
 from config_manager import load_config, load_environment_config
-from pathlib import Path
 
 # Установить корневую директорию проекта
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -32,7 +36,7 @@ def run_websocket():
         asyncio.set_event_loop(loop)
 
         import data_handler
-        data_handler.MAIN_LOOP = loop  # <--- сохраняем loop для stop/resume
+        data_handler.MAIN_LOOP = loop  # сохраняем loop для stop/resume
 
         loop.run_until_complete(start_binance_websocket(ROOT_DIR))
     except Exception as e:
@@ -40,25 +44,30 @@ def run_websocket():
         RESTART_FLAG.touch()
         sys.exit(1)
 
-
 def run_fivesec_dash():
-    """Запуск Dash сервера"""
+    """Запуск Dash сервера с новой структурой"""
     try:
         logger.info("Starting 5-second Dash server")
-        start_fivesec_dash()
+        dash_app = create_dash_app()
+        register_online_callbacks(dash_app, config, fivesec_buffer)
+
+        env_name = config.get("app_env", "prod")
+        env_conf = env_config[env_name]  # достаём конфиг по среде
+        dash_app.run(host="0.0.0.0", port=env_conf["port_dash"])
     except Exception as e:
         logger.error(f"5-second Dash thread error: {e}", exc_info=True)
         RESTART_FLAG.touch()
         sys.exit(1)
 
+
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     if RESTART_FLAG.exists():
         RESTART_FLAG.unlink()
         logger.info("Restart flag deleted on startup")
-        
+
     logger.info("Starting 5-second application")
 
     # Загрузка исторических данных

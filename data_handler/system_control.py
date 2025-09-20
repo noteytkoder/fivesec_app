@@ -7,20 +7,28 @@ import asyncio
 import os
 from pathlib import Path
 
-from .config import logger
+from .config import logger, MAIN_LOOP
+from . import config
+
 from .binance_api import producer_ws, consumer_loop
 from .prediction_loop import fivesec_prediction_loop
 from .retrain_loop import fivesec_retrain_loop
 from .errors_loop import update_fivesec_errors_loop
 
 # Глобальные переменные для управления
-MAIN_LOOP = None
+# MAIN_LOOP = None
 SYSTEM_STATE = "RUNNING"
 INTENTIONAL_STOP = False
 RUNNING_TASKS = []
 RUNNING_TASKS_LOCK = asyncio.Lock()
 ACTIVE_QUEUE = None
 
+
+def stop_system():
+    global MAIN_LOOP
+    if MAIN_LOOP is None:
+        raise RuntimeError("Main loop not set")
+    
 def set_main_loop(loop):
     """
     Сохраняет ссылку на основной asyncio loop для запуска/остановки задач.
@@ -66,11 +74,11 @@ async def start_binance_websocket(root_dir):
             RUNNING_TASKS = []
 
     if not INTENTIONAL_STOP:
-        logger.error("start_binance_websocket exited unexpectedly, creating restart flag")
+        config.logger.error("start_binance_websocket exited unexpectedly, creating restart flag")
         Path(os.path.join(root_dir, "fivesec_restart.flag")).touch()
         os._exit(0)
     else:
-        logger.info("System stopped intentionally — staying down")
+        config.logger.info("System stopped intentionally — staying down")
 
 async def _stop_system_async():
     """
@@ -78,27 +86,27 @@ async def _stop_system_async():
     """
     global INTENTIONAL_STOP, SYSTEM_STATE
     if SYSTEM_STATE == "STOPPED":
-        logger.info("System already STOPPED")
+        config.logger.info("System already STOPPED")
         return
     INTENTIONAL_STOP = True
     SYSTEM_STATE = "STOPPED"
 
     async with RUNNING_TASKS_LOCK:
         tasks = list(RUNNING_TASKS)
-    logger.warning(f"Cancelling {len(tasks)} tasks...")
+    config.logger.warning(f"Cancelling {len(tasks)} tasks...")
 
     for t in tasks:
         try:
             t.cancel()
         except Exception as e:
-            logger.error(f"Failed to cancel task {t}: {e}")
+            config.logger.error(f"Failed to cancel task {t}: {e}")
 
     if tasks:
         _ = await asyncio.gather(*tasks, return_exceptions=True)
     async with RUNNING_TASKS_LOCK:
         RUNNING_TASKS.clear()
 
-    logger.warning("All tasks cancelled. System is STOPPED.")
+    config.logger.warning("All tasks cancelled. System is STOPPED.")
 
 async def _resume_system_async(root_dir):
     """
@@ -106,19 +114,12 @@ async def _resume_system_async(root_dir):
     """
     global INTENTIONAL_STOP, SYSTEM_STATE
     if SYSTEM_STATE == "RUNNING":
-        logger.info("System already RUNNING")
+        config.logger.info("System already RUNNING")
         return
     INTENTIONAL_STOP = False
     SYSTEM_STATE = "RUNNING"
     await start_binance_websocket(root_dir)
 
-def stop_system():
-    """
-    Останавливает систему из внешнего кода (через run_coroutine_threadsafe).
-    """
-    if MAIN_LOOP is None:
-        raise RuntimeError("Main loop not set")
-    asyncio.run_coroutine_threadsafe(_stop_system_async(), MAIN_LOOP)
 
 def resume_system(root_dir):
     """

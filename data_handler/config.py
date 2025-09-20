@@ -12,10 +12,14 @@ from config_manager import load_config
 config = load_config()
 
 # Пути и логгер
-ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LOGS_DIR = os.path.join(ROOT_DIR, "logs")
 logger = setup_logger(log_dir=LOGS_DIR)
+
 
 # Часовой пояс и интервалы
 MSK_TZ = pytz.timezone(config.get("timezone", "Europe/Moscow"))
 INTERVAL_SECONDS = {"1s": 1, "5s": 5}
+
+# в начале файла
+MAIN_LOOP = None  # общий объект
