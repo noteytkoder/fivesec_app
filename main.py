@@ -29,22 +29,20 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 def run_websocket():
-    logger.info("Starting WebSocket")
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
     from data_handler import system_control
     system_control.set_main_loop(loop)
 
-    # стартуем корутину
+    # создаём старт системы как таск
     loop.create_task(system_control.start_binance_websocket(ROOT_DIR))
 
     try:
-        loop.run_forever()  # а не run_until_complete
+        loop.run_forever()  # loop живёт, обрабатывает все корутины
     except Exception as e:
-        logger.error(f"WebSocket thread error: {e}", exc_info=True)
-        RESTART_FLAG.touch()
-        sys.exit(1)
+        ...
+
 
 
 def run_fivesec_dash():
