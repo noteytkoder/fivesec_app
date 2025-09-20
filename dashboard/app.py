@@ -9,6 +9,7 @@ import os
 from config_manager import load_config, load_environment_config
 from logger import setup_logger
 from .layout import build_layout
+import time
 
 def create_dash_app():
     config = load_config()
@@ -20,6 +21,9 @@ def create_dash_app():
     dash_app = Dash(__name__, assets_folder="static")
     dash_app.server.secret_key = secrets.token_hex(16)
 
+    #время для статуса сервера
+    dash_app.server.start_time = time.time()
+    
     # Basic auth
     creds = {config["auth"]["username"]: config["auth"]["password"]}
     BasicAuth(dash_app, creds)
