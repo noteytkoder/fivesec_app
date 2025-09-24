@@ -63,3 +63,18 @@ def create_prediction_figure(pred_df, mse, mae, pred_count, last_time, time_delt
                           xaxis_title="Время (MSK)", yaxis_title="Цена (USDT)",
                           xaxis_range=x_range_pred, yaxis_range=y_range, showlegend=True, height=400, template="plotly_dark")
     return fig, style
+
+def create_orderbook_figure(orderbook_df):
+    """
+    Построение графика глубины стакана.
+    """
+    if orderbook_df is None or orderbook_df.empty:
+        return go.Figure()
+    fig = go.Figure()
+    latest = orderbook_df.iloc[-1]
+    bids = pd.DataFrame(latest["b"], columns=["price", "quantity"]).astype(float)
+    asks = pd.DataFrame(latest["a"], columns=["price", "quantity"]).astype(float)
+    fig.add_trace(go.Bar(x=bids["price"], y=bids["quantity"], name="Bids", marker_color="blue"))
+    fig.add_trace(go.Bar(x=asks["price"], y=asks["quantity"], name="Asks", marker_color="red"))
+    fig.update_layout(title="Order Book Depth", xaxis_title="Price", yaxis_title="Quantity")
+    return fig

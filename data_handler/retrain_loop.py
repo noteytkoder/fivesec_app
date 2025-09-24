@@ -44,9 +44,10 @@ async def fivesec_retrain_loop():
                 if df.isna().any().any() or np.any(np.isinf(df.values)):
                     logger.warning("NaN/Inf in processed df, skipping retrain")
                 else:
-                    train_fivesec_model(df)
+                    use_orderbook = config["model"].get("use_orderbook", False)
+                    train_fivesec_model(df, use_orderbook=use_orderbook)
                     last_train_time = current_time
-                    logger.info(f"5-second model retrained, samples={len(df)}")
+                    logger.info(f"5-second model retrained (use_orderbook={use_orderbook}), samples={len(df)}")
             await asyncio.sleep(train_interval)
         except Exception as e:
             logger.error(f"Error in fivesec_retrain_loop: {e}", exc_info=True)

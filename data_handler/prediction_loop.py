@@ -59,7 +59,8 @@ async def fivesec_prediction_loop(root_dir):
                 "sma_lag_1", "sma_lag_2", "sma_lag_3"
             ]]])
 
-            fivesec_prediction = predict_fivesec(features_df)
+            use_orderbook = config["model"].get("use_orderbook", False)  # Используем флаг из конфига
+            fivesec_prediction = predict_fivesec(features_df, use_orderbook=use_orderbook)
             if fivesec_prediction is None:
                 await asyncio.sleep(wait_seconds)
                 continue

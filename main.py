@@ -8,6 +8,7 @@ from pathlib import Path
 from data_handler import (
     start_binance_websocket,
     fetch_fivesec_historical_data,
+    fetch_orderbook_snapshot,  # Новый импорт
     fivesec_buffer,
 )
 from dashboard import create_dash_app, register_online_callbacks  # новый импорт
@@ -43,8 +44,6 @@ def run_websocket():
     except Exception as e:
         ...
 
-
-
 def run_fivesec_dash():
     """Запуск Dash сервера с новой структурой"""
     try:
@@ -60,7 +59,6 @@ def run_fivesec_dash():
         RESTART_FLAG.touch()
         sys.exit(1)
 
-
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -75,6 +73,7 @@ def main():
     try:
         logger.info("Fetching historical data")
         asyncio.run(fetch_fivesec_historical_data())
+        asyncio.run(fetch_orderbook_snapshot())  # Новый вызов: загрузка снимка стакана
     except Exception as e:
         logger.error(f"Error fetching historical data: {e}", exc_info=True)
 

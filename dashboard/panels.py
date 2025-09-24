@@ -29,6 +29,7 @@ def create_fivesec_layout(config):
         html.Div([
             dcc.Graph(id="main-graph", config={"displayModeBar": True, "scrollZoom": True, "modeBarButtonsToAdd": ["zoom2d", "pan2d", "select2d", "lasso2d"]}),
             dcc.Graph(id="predictions-graph-fivesec", style={"display": "none"}, config={"displayModeBar": True, "scrollZoom": True}),
+            dcc.Graph(id="orderbook-graph", style={"display": "block"}, config={"displayModeBar": True, "scrollZoom": True}),  # Новый график стакана
         ], style={"width": "80%", "display": "inline-block"}),
     ])
 
@@ -53,4 +54,15 @@ def create_server_status_panel():
             html.P("Время работы сервера: ...", id="uptime"),
             html.P("Статус: ...", id="server-health")
         ], style={"border": "1px solid #444", "padding": "10px", "margin": "10px"}),
+    ])
+
+def create_orderbook_status_panel():
+    """
+    Панель статуса стакана.
+    """
+    return html.Div([
+        html.H3("Order Book Status"),
+        html.P(id="orderbook-buffer-size", children="Buffer Size: ..."),
+        html.P(id="orderbook-last-update", children="Last Update: ..."),
+        html.P(id="orderbook-imbalance", children="Bid/Ask Imbalance: ...")
     ])

@@ -12,8 +12,8 @@ from flask import Response
 from config_manager import load_config, load_environment_config, save_config
 from logger import setup_logger
 from .utils import prepare_data, prepare_pred_df
-from .figures import create_main_figure, create_prediction_figure
-from data_handler import fivesec_buffer, buffer_lock, fivesec_prediction_file_lock, fivesec_predictions, stop_system, resume_system
+from .figures import create_main_figure, create_prediction_figure, create_orderbook_figure
+from data_handler import fivesec_buffer, buffer_lock, fivesec_prediction_file_lock, fivesec_predictions, stop_system, resume_system, get_current_orderbook_df
 import pytz
 from pathlib import Path
 def _get_file_reversed(file_path):
@@ -264,6 +264,45 @@ def register_online_callbacks(app, config, buffer_deque):
         else:
             return Response(f"<table>{html_row}</table>", mimetype="text/html")
 
+    # Новый колбэк для обновления статуса и графика стакана
+    @app.callback(
+        [Output("orderbook-buffer-size", "children"),
+         Output("orderbook-last-update", "children"),
+         Output("orderbook-imbalance", "children"),
+         Output("orderbook-graph", "figure")],
+        [Input("interval-component", "n_intervals")]
+    )
+    def update_orderbook_status(n):
+        orderbook_df = get_current_orderbook_df()
+        if orderbook_df is None or orderbook_df.empty:
+            return "Buffer Size: 0", "Last Update: N/A", "Imbalance: N/A", go.Figure()
+        buffer_size = len(orderbook_df)
+        last_update = orderbook_df.index[-1].strftime("%Y-%m-%d %H:%M:%S")
+        latest = orderbook_df.iloc[-1]
+        bids = pd.DataFrame(latest["b"], columns=["price", "quantity"]).astype(float)
+        asks = pd.DataFrame(latest["a"], columns=["price", "quantity"]).astype(float)
+        bid_volume = bids["quantity"].sum()
+        ask_volume = asks["quantity"].sum()
+        imbalance = (bid_volume - ask_volume) / (bid_volume + ask_volume) if (bid_volume + ask_volume) > 0 else 0
+        fig = create_orderbook_figure(orderbook_df)
+        return (
+            f"Buffer Size: {buffer_size}",
+            f"Last Update: {last_update}",
+            f"Bid/Ask Imbalance: {imbalance:.2f}",
+            fig
+        )
+    
+    # Колбэк для переключения модели
+    @app.callback(
+        Output("model-status", "children"),
+        Input("model-selector", "value")
+    )
+    def update_model_selection(values):
+        use_orderbook = "orderbook" in values
+        config["model"]["use_orderbook"] = use_orderbook
+        save_config(config)  # Сохраняем изменения в конфиг
+        return f"Model: {'Order Book' if use_orderbook else 'Kline Only'}"
+    
     # server status callback
     @app.callback(Output("server-status-content", "children"), Input("server-status-interval", "n_intervals"))
     def update_server_status(n):

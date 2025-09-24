@@ -10,7 +10,7 @@ import json
 import websockets
 import numpy as np
 
-from .config import config, INTERVAL_SECONDS, logger
+from .config import config, INTERVAL_SECONDS, logger, MSK_TZ
 from .buffers import buffer_lock, fivesec_buffer
 from .indicators import process_timestamp, process_data_for_model
 from model import train_fivesec_model
@@ -76,6 +76,22 @@ async def fetch_fivesec_historical_data():
     except Exception as e:
         logger.error(f"Error fetching 5-second historical data: {e}", exc_info=True)
 
+async def fetch_orderbook_snapshot():
+    """
+    Загружает моментальный снимок стакана (order book) через REST API Binance.
+    """
+    try:
+        url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=1000"
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ)
+        logger.info("Order book snapshot fetched")
+        return data
+    except Exception as e:
+        logger.error(f"Error fetching order book snapshot: {e}", exc_info=True)
+        return None
+
 async def producer_ws(uri, name, queue):
     """
     Подключается к WebSocket Binance, получает сообщения и помещает в очередь.
@@ -87,6 +103,23 @@ async def producer_ws(uri, name, queue):
                 while True:
                     message = await websocket.recv()
                     await queue.put((name, message))
+        except Exception as e:
+            logger.error(f"WebSocket {name} error: {e}")
+            await asyncio.sleep(5)
+
+async def producer_orderbook_ws(uri, name, queue):
+    """
+    Подключается к WebSocket Binance для обновлений стакана, получает сообщения и помещает в очередь.
+    """
+    while True:
+        try:
+            async with websockets.connect(uri, ping_interval=20, ping_timeout=20) as websocket:
+                logger.info(f"WebSocket {name} connected")
+                while True:
+                    message = await websocket.recv()
+                    data = json.loads(message)
+                    data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ)
+                    await queue.put((name, data))
         except Exception as e:
             logger.error(f"WebSocket {name} error: {e}")
             await asyncio.sleep(5)
@@ -117,5 +150,9 @@ async def consumer_loop(raw_queue):
                 message_count += 1
                 if message_count % 100 == 0:
                     logger.info(f"[consumer] Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}")
+            if name == "orderbook_diff" and "b" in data and "a" in data:
+                with buffer_lock:
+                    orderbook_buffer.append(data)
+                logger.info(f"Order book buffer updated, size: {len(orderbook_buffer)}")
         except Exception as e:
             logger.error(f"[consumer] Error: {e}")

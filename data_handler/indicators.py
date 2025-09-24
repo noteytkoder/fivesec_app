@@ -69,3 +69,56 @@ def process_data_for_model(df, interval="5s"):
     except Exception as e:
         logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True)
         return None
+
+def process_orderbook_for_model(orderbook_buffer, interval="5s"):
+    """
+    Обработка буфера стакана: извлечение признаков и ресэмплинг.
+    """
+    try:
+        df = get_current_orderbook_df()
+        if df is None or df.empty:
+            return None
+        features = []
+        for _, row in df.iterrows():
+            bids = pd.DataFrame(row["b"], columns=["price", "quantity"]).astype(float)
+            asks = pd.DataFrame(row["a"], columns=["price", "quantity"]).astype(float)
+            bid_price_max = bids["price"].max()
+            ask_price_min = asks["price"].min()
+            bid_volume = bids["quantity"].sum()
+            ask_volume = asks["quantity"].sum()
+            feature_row = {
+                "timestamp": row.name,
+                "spread": ask_price_min - bid_price_max,
+                "mid_price": (ask_price_min + bid_price_max) / 2,
+                "bid_ask_ratio": bid_volume / ask_volume if ask_volume > 0 else np.nan,
+                "imbalance": (bid_volume - ask_volume) / (bid_volume + ask_volume) if (bid_volume + ask_volume) > 0 else np.nan,
+                "bid_volume_10": bids["quantity"].iloc[:10].sum(),
+                "ask_volume_10": asks["quantity"].iloc[:10].sum()
+            }
+            features.append(feature_row)
+        features_df = pd.DataFrame(features)
+        features_df["timestamp"] = pd.to_datetime(features_df["timestamp"])
+        features_df.set_index("timestamp", inplace=True)
+        features_df = features_df.resample(interval).mean().interpolate(method="linear").ffill().dropna()
+        return features_df
+    except Exception as e:
+        logger.error(f"Error processing order book for model: {e}", exc_info=True)
+        return None
+
+def merge_features(kline_df, orderbook_df):
+    """
+    Объединение признаков kline и стакана по времени.
+    """
+    try:
+        kline_df = ensure_datetime_index(kline_df)
+        orderbook_df = ensure_datetime_index(orderbook_df)
+        if kline_df is None or orderbook_df is None:
+            return None
+        merged_df = pd.merge_asof(
+            kline_df.reset_index(), orderbook_df.reset_index(),
+            on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=5)
+        ).set_index("timestamp")
+        return merged_df.dropna()
+    except Exception as e:
+        logger.error(f"Error merging kline and order book features: {e}", exc_info=True)
+        return None
