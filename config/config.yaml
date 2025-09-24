@@ -15,7 +15,7 @@ model:
   min_fivesec_candles: 1
   min_samples_leaf: 1
   min_samples_split: 2
-  use_orderbook: false
+  use_orderbook: true
 timezone: Europe/Moscow
 visual:
   error_band_color: rgba(255,165,0,0.2)

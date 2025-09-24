@@ -153,6 +153,6 @@ async def consumer_loop(raw_queue):
             if name == "orderbook_diff" and "b" in data and "a" in data:
                 with buffer_lock:
                     orderbook_buffer.append(data)
-                logger.info(f"Order book buffer updated, size: {len(orderbook_buffer)}")
+                # logger.info(f"Order book buffer updated, size: {len(orderbook_buffer)}")
         except Exception as e:
             logger.error(f"[consumer] Error: {e}")

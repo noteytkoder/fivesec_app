@@ -5,12 +5,14 @@
 
 import time
 import numpy as np
-
-from .config import config, logger
+import asyncio
+from config_manager import load_config  # Импортируем load_config
 from .buffers import get_current_buffer_df
 from .indicators import process_data_for_model
 from model import train_fivesec_model
-import asyncio
+from logger import setup_logger
+
+logger = setup_logger()
 
 async def fivesec_retrain_loop():
     """
@@ -19,10 +21,13 @@ async def fivesec_retrain_loop():
     last_train_time = time.time()
     cached_processed_df = None
     last_buffer_hash = None
-    train_interval = config["data"]["fivesec_train_interval"]
 
     while True:
         try:
+            # Перезагружаем конфигурацию на каждом цикле
+            config = load_config()
+            train_interval = config["data"]["fivesec_train_interval"]
+
             current_time = time.time()
             df = get_current_buffer_df()
             if df is None or len(df) < config["data"]["min_records"]:

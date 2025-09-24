@@ -7,13 +7,13 @@ import os
 import time
 import pandas as pd
 from collections import deque
-
-from .config import LOGS_DIR, MSK_TZ, INTERVAL_SECONDS, config, logger
+import asyncio
+from config_manager import load_config  # Импортируем load_config
+from logger import setup_logger, setup_predictions_logger
 from .buffers import fivesec_predictions, fivesec_prediction_file_lock, get_current_buffer_df
 from .indicators import process_data_for_model
-from logger import setup_predictions_logger
 from model import predict_fivesec
-import asyncio
+from .config import LOGS_DIR, MSK_TZ, INTERVAL_SECONDS
 
 async def fivesec_prediction_loop(root_dir):
     """
@@ -21,13 +21,12 @@ async def fivesec_prediction_loop(root_dir):
     Сохраняет данные в буфер и CSV.
     """
     global fivesec_predictions
-    logger.info("fivesec_prediction_loop started")
+    logger = setup_logger()
     predictions_logger = setup_predictions_logger(log_dir=LOGS_DIR)
     wait_seconds = INTERVAL_SECONDS["5s"]
     max_predictions = 10000
     csv_file_path = os.path.join(LOGS_DIR, "fivesec_predictions.csv")
-    csv_write_interval = config.get("data", {}).get("csv_write_interval", 30)
-
+    
     os.makedirs(LOGS_DIR, exist_ok=True)
     if os.path.exists(csv_file_path):
         os.remove(csv_file_path)
@@ -42,6 +41,8 @@ async def fivesec_prediction_loop(root_dir):
     while True:
         start = time.time()
         try:
+            # Перезагружаем конфигурацию
+            config = load_config()
             df = get_current_buffer_df()
             if df is None or len(df) < config["data"]["min_records"]:
                 await asyncio.sleep(wait_seconds)
@@ -92,7 +93,7 @@ async def fivesec_prediction_loop(root_dir):
                     fivesec_predictions = deque(list(fivesec_predictions)[-max_predictions:], maxlen=max_predictions)
 
             current_time = time.time()
-            if current_time - last_csv_write_time >= csv_write_interval:
+            if current_time - last_csv_write_time >= config.get("data", {}).get("csv_write_interval", 30):
                 with fivesec_prediction_file_lock:
                     pd.DataFrame(list(fivesec_predictions)).to_csv(csv_file_path, mode='w', index=False, encoding='utf-8')
                     last_csv_write_time = current_time
