@@ -8,10 +8,10 @@ import time
 import pandas as pd
 from collections import deque
 import asyncio
-from config_manager import load_config  # Импортируем load_config
+from config_manager import load_config
 from logger import setup_logger, setup_predictions_logger
-from .buffers import fivesec_predictions, fivesec_prediction_file_lock, get_current_buffer_df
-from .indicators import process_data_for_model
+from .buffers import fivesec_predictions, fivesec_prediction_file_lock, get_current_buffer_df, get_current_orderbook_df
+from .indicators import process_data_for_model, merge_features
 from model import predict_fivesec
 from .config import LOGS_DIR, MSK_TZ, INTERVAL_SECONDS
 
@@ -43,6 +43,9 @@ async def fivesec_prediction_loop(root_dir):
         try:
             # Перезагружаем конфигурацию
             config = load_config()
+            use_orderbook = config["model"].get("use_orderbook", False)
+            
+            # Получаем данные kline
             df = get_current_buffer_df()
             if df is None or len(df) < config["data"]["min_records"]:
                 await asyncio.sleep(wait_seconds)
@@ -51,16 +54,47 @@ async def fivesec_prediction_loop(root_dir):
             if df is None or df.empty:
                 await asyncio.sleep(wait_seconds)
                 continue
-            latest_row = df.iloc[-1]
-            current_close = latest_row["close"]
-            features_df = pd.DataFrame([latest_row[[
-                "close", "rsi", "sma", "volume", "log_volume",
-                "close_lag_1", "close_lag_2", "close_lag_3",
-                "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-                "sma_lag_1", "sma_lag_2", "sma_lag_3"
-            ]]])
 
-            use_orderbook = config["model"].get("use_orderbook", False)  # Используем флаг из конфига
+            # Формируем признаки для предсказания
+            if use_orderbook:
+                # Получаем данные стакана и объединяем с kline
+                orderbook_df = get_current_orderbook_df()
+                if orderbook_df is None or orderbook_df.empty:
+                    logger.warning("No order book data available for prediction")
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                features_df = merge_features(df, orderbook_df)
+                if features_df is None or features_df.empty:
+                    logger.warning("Failed to merge kline and order book data for prediction")
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                latest_row = features_df.iloc[-1]
+                feature_columns = [
+                    "close", "rsi", "sma", "volume", "log_volume",
+                    "close_lag_1", "close_lag_2", "close_lag_3",
+                    "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+                    "sma_lag_1", "sma_lag_2", "sma_lag_3",
+                    "spread", "mid_price", "bid_ask_ratio", "imbalance",
+                    "bid_volume_10", "ask_volume_10"
+                ]
+            else:
+                latest_row = df.iloc[-1]
+                feature_columns = [
+                    "close", "rsi", "sma", "volume", "log_volume",
+                    "close_lag_1", "close_lag_2", "close_lag_3",
+                    "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+                    "sma_lag_1", "sma_lag_2", "sma_lag_3"
+                ]
+                features_df = pd.DataFrame([latest_row[feature_columns]])
+
+            # Проверяем наличие всех необходимых признаков
+            missing_features = [col for col in feature_columns if col not in features_df.columns]
+            if missing_features:
+                logger.error(f"Missing features in prediction input (kline_with_orderbook): {missing_features}")
+                await asyncio.sleep(wait_seconds)
+                continue
+
+            current_close = latest_row["close"]
             fivesec_prediction = predict_fivesec(features_df, use_orderbook=use_orderbook)
             if fivesec_prediction is None:
                 await asyncio.sleep(wait_seconds)

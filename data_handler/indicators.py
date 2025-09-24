@@ -7,6 +7,7 @@ SMA, лагов и агрегации свечей.
 import pandas as pd
 import numpy as np
 from .config import config, MSK_TZ, logger
+from .buffers import get_current_orderbook_df  # Добавляем импорт
 
 def process_timestamp(ms_timestamp):
     """Преобразует timestamp (мс) в pandas.Timestamp с TZ=MSK_TZ."""
@@ -113,11 +114,20 @@ def merge_features(kline_df, orderbook_df):
         kline_df = ensure_datetime_index(kline_df)
         orderbook_df = ensure_datetime_index(orderbook_df)
         if kline_df is None or orderbook_df is None:
+            logger.error("Invalid input for merge_features: kline_df or orderbook_df is None")
             return None
+        
+        # Нормализуем часовые пояса к Europe/Moscow
+        kline_df.index = kline_df.index.tz_convert(MSK_TZ)
+        orderbook_df.index = orderbook_df.index.tz_convert(MSK_TZ)
+
         merged_df = pd.merge_asof(
             kline_df.reset_index(), orderbook_df.reset_index(),
             on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=5)
         ).set_index("timestamp")
+        if merged_df.empty:
+            logger.error("Merged DataFrame is empty")
+            return None
         return merged_df.dropna()
     except Exception as e:
         logger.error(f"Error merging kline and order book features: {e}", exc_info=True)
