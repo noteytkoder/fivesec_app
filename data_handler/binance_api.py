@@ -11,7 +11,7 @@ import websockets
 import numpy as np
 
 from .config import config, INTERVAL_SECONDS, logger, MSK_TZ
-from .buffers import buffer_lock, fivesec_buffer
+from .buffers import buffer_lock, fivesec_buffer, orderbook_buffer
 from .indicators import process_timestamp, process_data_for_model
 from model import train_fivesec_model
 import time  
@@ -117,9 +117,9 @@ async def producer_orderbook_ws(uri, name, queue):
                 logger.info(f"WebSocket {name} connected")
                 while True:
                     message = await websocket.recv()
-                    data = json.loads(message)
-                    data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ)
-                    await queue.put((name, data))
+                    data = json.loads(message)  # Парсим JSON здесь для добавления timestamp
+                    data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ).isoformat()
+                    await queue.put((name, json.dumps(data)))  # Помещаем сериализованный JSON в очередь
         except Exception as e:
             logger.error(f"WebSocket {name} error: {e}")
             await asyncio.sleep(5)
@@ -133,7 +133,7 @@ async def consumer_loop(raw_queue):
     while True:
         try:
             name, raw = await raw_queue.get()
-            data = json.loads(raw)
+            data = json.loads(raw)  # Ожидаем строку JSON
             if name == "fivesec_kline" and "k" in data:
                 k = data["k"]
                 timestamp = process_timestamp(k["t"])
