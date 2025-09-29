@@ -22,3 +22,9 @@ dev3:
   predictions_log_endpoint: /logs/fivesec_predictions.log
   logtotal_endpoint: /logs/fivesec_logtotal
   table_endpoint: /logs/predictions.table
+dev4:
+  port_dash: 8452
+  csv_endpoint: /logs/fivesec_predictions_.csv
+  predictions_log_endpoint: /logs/fivesec_predictions.log
+  logtotal_endpoint: /logs/fivesec_logtotal
+  table_endpoint: /logs/predictions.table

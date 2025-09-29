@@ -81,7 +81,7 @@ async def fetch_orderbook_snapshot():
     Загружает моментальный снимок стакана (order book) через REST API Binance.
     """
     try:
-        url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=1000"
+        url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=100@1000ms"
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         data = response.json()

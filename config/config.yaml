@@ -1,9 +1,9 @@
-app_env: dev3
+app_env: dev4
 auth:
   password: qwerty63
   username: admin
 data:
-  buffer_orderbook_size: 50000
+  buffer_orderbook_size: 5000
   buffer_size: 5000
   csv_write_interval: 30
   download_range: 1hour
