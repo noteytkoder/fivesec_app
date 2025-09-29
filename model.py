@@ -87,10 +87,25 @@ def train_fivesec_model(df, use_orderbook=False):
             logger.warning(f"Zero standard deviation in features ({model_key}): {X.std()}")
             return
         
+        # diagnostic block (add before scaler.fit_transform)
+        logger.info(f"{model_key} before train: X.shape={X.shape}, y.shape={y.shape}")
+        logger.info(f"{model_key} cols: {X.columns.tolist()}")
+        logger.info(f"{model_key} nan per col:\n{X.isna().sum()}")
+        logger.info(f"{model_key} nunique per col:\n{X.nunique()}")
+        logger.info(f"{model_key} std per col:\n{X.std()}")
+        logger.info(f"{model_key} describe:\n{X.describe().T}")
+        
         # Нормализация данных
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
         logger.debug(f"train_fivesec_model ({model_key}): Data normalized, X_scaled shape: {X_scaled.shape}")
+        
+        # wrap back to DataFrame to inspect
+        Xs_df = pd.DataFrame(X_scaled, index=X.index, columns=X.columns)
+        logger.info(f"{model_key} after scaling: shape={Xs_df.shape}")
+        logger.info(f"{model_key} scaled mean (approx):\n{Xs_df.mean().round(6)}")
+        logger.info(f"{model_key} scaled std (approx):\n{Xs_df.std().round(6)}")
+        logger.info(f"{model_key} any NaN after scaling: {Xs_df.isna().any().any()}")
         
         # Настройка параметров модели
         max_depth = config["model"]["fivesec_max_depth"]
@@ -110,6 +125,7 @@ def train_fivesec_model(df, use_orderbook=False):
             max_features=config["model"].get("max_features", "sqrt"),
             random_state=42
         )
+
         model.fit(X_scaled, y)
         
         # Оценка модели

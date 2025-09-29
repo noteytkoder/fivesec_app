@@ -12,7 +12,7 @@ from .config import config
 # Глобальные буферы и блокировки
 buffer_lock = Lock()
 fivesec_buffer = deque(maxlen=config["data"]["buffer_size"])
-orderbook_buffer = deque(maxlen=config["data"]["buffer_size"])  # Новый буфер для стакана
+orderbook_buffer = deque(maxlen=config["data"]["buffer_orderbook_size"])  # Новый буфер для стакана
 fivesec_predictions = deque(maxlen=config["data"]["buffer_size"])
 fivesec_prediction_file_lock = Lock()
 
