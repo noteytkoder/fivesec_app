@@ -64,24 +64,24 @@ def create_prediction_figure(pred_df, mse, mae, pred_count, last_time, time_delt
                           xaxis_range=x_range_pred, yaxis_range=y_range, showlegend=True, height=400, template="plotly_dark")
     return fig, style
 
-def create_orderbook_figure(orderbook_df):
-    """
-    Создаёт график для отображения данных стакана (например, временной ряд imbalance).
-    """
-    if orderbook_df is None or orderbook_df.empty:
-        return go.Figure()
+# def create_orderbook_figure(orderbook_df):
+#     """
+#     Создаёт график для отображения данных стакана (например, временной ряд imbalance).
+#     """
+#     if orderbook_df is None or orderbook_df.empty:
+#         return go.Figure()
     
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=orderbook_df.index,
-        y=orderbook_df["imbalance"],
-        mode="lines",
-        name="Bid/Ask Imbalance"
-    ))
-    fig.update_layout(
-        title="Order Book Imbalance",
-        xaxis_title="Time",
-        yaxis_title="Imbalance",
-        template="plotly_dark"
-    )
-    return fig
+#     fig = go.Figure()
+#     fig.add_trace(go.Scatter(
+#         x=orderbook_df.index,
+#         y=orderbook_df["imbalance"],
+#         mode="lines",
+#         name="Bid/Ask Imbalance"
+#     ))
+#     fig.update_layout(
+#         title="Order Book Imbalance",
+#         xaxis_title="Time",
+#         yaxis_title="Imbalance",
+#         template="plotly_dark"
+#     )
+#     return fig

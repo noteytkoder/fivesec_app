@@ -29,7 +29,7 @@ def create_fivesec_layout(config):
         html.Div([
             dcc.Graph(id="main-graph", config={"displayModeBar": True, "scrollZoom": True, "modeBarButtonsToAdd": ["zoom2d", "pan2d", "select2d", "lasso2d"]}),
             dcc.Graph(id="predictions-graph-fivesec", style={"display": "none"}, config={"displayModeBar": True, "scrollZoom": True}),
-            dcc.Graph(id="orderbook-graph", style={"display": "block"}, config={"displayModeBar": True, "scrollZoom": True}),  # Новый график стакана
+            #dcc.Graph(id="orderbook-graph", style={"display": "block"}, config={"displayModeBar": True, "scrollZoom": True}),  # Новый график стакана
         ], style={"width": "80%", "display": "inline-block"}),
     ])
 

@@ -12,7 +12,7 @@ from flask import Response
 from config_manager import load_config, load_environment_config, save_config
 from logger import setup_logger
 from .utils import prepare_data, prepare_pred_df
-from .figures import create_main_figure, create_prediction_figure, create_orderbook_figure
+from .figures import create_main_figure, create_prediction_figure
 from data_handler import fivesec_buffer, buffer_lock, fivesec_prediction_file_lock, fivesec_predictions, stop_system, resume_system, get_current_orderbook_df, MSK_TZ
 import pytz
 from pathlib import Path
@@ -269,7 +269,7 @@ def register_online_callbacks(app, config, buffer_deque):
             Output("orderbook-buffer-size", "children"),
             Output("orderbook-last-update", "children"),
             Output("orderbook-imbalance", "children"),
-            Output("orderbook-graph", "figure")
+            #Output("orderbook-graph", "figure")
         ],
         [Input("interval-component", "n_intervals")]
     )
@@ -282,7 +282,7 @@ def register_online_callbacks(app, config, buffer_deque):
         buffer_size = len(orderbook_df)
         last_update = orderbook_df.index[-1].tz_convert(MSK_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
         imbalance = orderbook_df["imbalance"].iloc[-1]
-        fig = create_orderbook_figure(orderbook_df)
+        # fig = create_orderbook_figure(orderbook_df)
         
         logger.debug(f"Orderbook status: size={buffer_size}, last_update={last_update}, imbalance={imbalance}")
         
@@ -290,7 +290,7 @@ def register_online_callbacks(app, config, buffer_deque):
             f"Buffer Size: {buffer_size}",
             f"Last Update: {last_update}",
             f"Bid/Ask Imbalance: {imbalance:.2f}",
-            fig
+            # fig
         )
     
     # Колбэк для переключения модели
