@@ -13,9 +13,10 @@ from config_manager import load_config, load_environment_config, save_config
 from logger import setup_logger
 from .utils import prepare_data, prepare_pred_df
 from .figures import create_main_figure, create_prediction_figure
-from data_handler import fivesec_buffer, buffer_lock, fivesec_prediction_file_lock, fivesec_predictions, stop_system, resume_system, get_current_orderbook_df, MSK_TZ
+from data_handler import fivesec_buffer, buffer_lock, fivesec_prediction_file_lock, fivesec_predictions, stop_system, resume_system, get_current_orderbook_df, MSK_TZ, orderbook_buffer
 import pytz
 from pathlib import Path
+
 def _get_file_reversed(file_path):
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -23,6 +24,8 @@ def _get_file_reversed(file_path):
         return "".join(reversed(lines))
     except Exception:
         return ""
+_cached_status = None
+_cached_buffer_hash = None
 
 def register_online_callbacks(app, config, buffer_deque):
     """
@@ -264,34 +267,42 @@ def register_online_callbacks(app, config, buffer_deque):
         else:
             return Response(f"<table>{html_row}</table>", mimetype="text/html")
 
+
+    # Новый callback без pandas
     @app.callback(
         [
             Output("orderbook-buffer-size", "children"),
             Output("orderbook-last-update", "children"),
             Output("orderbook-imbalance", "children"),
-            #Output("orderbook-graph", "figure")
         ],
         [Input("interval-component", "n_intervals")]
     )
     def update_orderbook_status(n):
-        orderbook_df = get_current_orderbook_df()
-        if orderbook_df is None or orderbook_df.empty:
-            logger.debug("Orderbook_df is None or empty in update_orderbook_status")
-            return "Buffer Size: 0", "Last Update: N/A", "Bid/Ask Imbalance: N/A", go.Figure()
+        global _cached_status, _cached_buffer_hash
+        with buffer_lock:
+            current_hash = hash(len(orderbook_buffer))  # Простой хэш по размеру
+            if current_hash == _cached_buffer_hash and _cached_status is not None:
+                logger.debug("Using cached orderbook status")
+                return _cached_status
+            
+            if not orderbook_buffer:
+                status = ("Buffer Size: 0", "Last Update: N/A", "Bid/Ask Imbalance: N/A")
+            else:
+                latest = orderbook_buffer[-1]
+                buffer_size = len(orderbook_buffer)
+                last_update = pd.to_datetime(latest["timestamp"]).tz_convert(MSK_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+                imbalance = latest["imbalance"]
+                status = (
+                    f"Buffer Size: {buffer_size}",
+                    f"Last Update: {last_update}",
+                    f"Bid/Ask Imbalance: {imbalance:.2f}"
+                )
+            
+            _cached_status = status
+            _cached_buffer_hash = current_hash
         
-        buffer_size = len(orderbook_df)
-        last_update = orderbook_df.index[-1].tz_convert(MSK_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
-        imbalance = orderbook_df["imbalance"].iloc[-1]
-        # fig = create_orderbook_figure(orderbook_df)
-        
-        logger.debug(f"Orderbook status: size={buffer_size}, last_update={last_update}, imbalance={imbalance}")
-        
-        return (
-            f"Buffer Size: {buffer_size}",
-            f"Last Update: {last_update}",
-            f"Bid/Ask Imbalance: {imbalance:.2f}",
-            # fig
-        )
+        logger.debug(f"Orderbook status updated: {status}")
+        return status
     
     # Колбэк для переключения модели
     @app.callback(

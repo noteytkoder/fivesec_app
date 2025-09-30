@@ -25,4 +25,4 @@ visual:
   predicted_price_color: orange
   real_price_color: blue
   show_error_band: true
-  update_interval: 1000
+  update_interval: 5000
