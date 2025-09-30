@@ -44,10 +44,11 @@ def calculate_indicators(df):
         df["rsi"] = compute_rsi(df["close"], config["model"].get("rsi_window", 7))
         df["sma"] = df["close"].rolling(window=config["model"].get("sma_window", 3)).mean()
         df["log_volume"] = np.log1p(df["volume"])
-        for lag in range(1, 4):
-            df[f"close_lag_{lag}"] = df["close"].shift(lag)
-            df[f"rsi_lag_{lag}"] = df["rsi"].shift(lag)
-            df[f"sma_lag_{lag}"] = df["sma"].shift(lag)
+        lags = range(1, 4)
+        for col in ["close", "rsi", "sma"]:
+            shifts = pd.concat([df[col].shift(lag) for lag in lags], axis=1)
+            shifts.columns = [f"{col}_lag_{lag}" for lag in lags]
+            df = pd.concat([df, shifts], axis=1)
         return df.dropna()
     except Exception as e:
         logger.error(f"Error calculating indicators: {e}")
@@ -65,43 +66,25 @@ def process_data_for_model(df, interval="5s"):
         df = df.resample(interval).agg({
             "open": "first", "high": "max", "low": "min",
             "close": "last", "volume": "sum"
-        }).interpolate(method="linear").ffill().dropna()
+        }).ffill().dropna()  # Заменил interpolate на ffill — быстрее, если данные регулярны
         return calculate_indicators(df)
     except Exception as e:
         logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True)
         return None
 
-def process_orderbook_for_model(orderbook_buffer, interval="5s"):
+def process_orderbook_for_model(orderbook_df, interval="5s"):
     """
-    Обработка буфера стакана: извлечение признаков и ресэмплинг.
+    Обработка буфера стакана: теперь фичи уже в df, просто ресэмплинг.
+    (Предвычисление перенесено в consumer)
     """
     try:
-        df = get_current_orderbook_df()
-        if df is None or df.empty:
+        if orderbook_df is None or orderbook_df.empty:
             return None
-        features = []
-        for _, row in df.iterrows():
-            bids = pd.DataFrame(row["b"], columns=["price", "quantity"]).astype(float)
-            asks = pd.DataFrame(row["a"], columns=["price", "quantity"]).astype(float)
-            bid_price_max = bids["price"].max()
-            ask_price_min = asks["price"].min()
-            bid_volume = bids["quantity"].sum()
-            ask_volume = asks["quantity"].sum()
-            feature_row = {
-                "timestamp": row.name,
-                "spread": ask_price_min - bid_price_max,
-                "mid_price": (ask_price_min + bid_price_max) / 2,
-                "bid_ask_ratio": bid_volume / ask_volume if ask_volume > 0 else np.nan,
-                "imbalance": (bid_volume - ask_volume) / (bid_volume + ask_volume) if (bid_volume + ask_volume) > 0 else np.nan,
-                "bid_volume_10": bids["quantity"].iloc[:10].sum(),
-                "ask_volume_10": asks["quantity"].iloc[:10].sum()
-            }
-            features.append(feature_row)
-        features_df = pd.DataFrame(features)
-        features_df["timestamp"] = pd.to_datetime(features_df["timestamp"])
-        features_df.set_index("timestamp", inplace=True)
-        features_df = features_df.resample(interval).mean().interpolate(method="linear").ffill().dropna()
-        return features_df
+        # Handle NaN defaults
+        orderbook_df["bid_ask_ratio"] = orderbook_df["bid_ask_ratio"].fillna(1.0)
+        orderbook_df["imbalance"] = orderbook_df["imbalance"].fillna(0.0)
+        orderbook_df = orderbook_df.resample(interval).mean().ffill().dropna()
+        return orderbook_df
     except Exception as e:
         logger.error(f"Error processing order book for model: {e}", exc_info=True)
         return None

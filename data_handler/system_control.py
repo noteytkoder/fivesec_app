@@ -47,7 +47,7 @@ async def _spawn_all_tasks(root_dir):
     ACTIVE_QUEUE = asyncio.Queue(maxsize=10000)
     ORDERBOOK_QUEUE = asyncio.Queue(maxsize=10000)
     fivesec_kline_uri = "wss://stream.binance.com:443/ws/btcusdt@kline_1s"
-    orderbook_uri = "wss://stream.binance.com:443/ws/btcusdt@depth@1000ms"
+    orderbook_uri = "wss://stream.binance.com:443/ws/btcusdt@depth"
 
     tasks = [
         asyncio.create_task(producer_ws(fivesec_kline_uri, "fivesec_kline", ACTIVE_QUEUE)),

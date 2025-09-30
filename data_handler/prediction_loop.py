@@ -10,7 +10,7 @@ from collections import deque
 import asyncio
 from config_manager import load_config
 from logger import setup_logger, setup_predictions_logger
-from .buffers import fivesec_predictions, fivesec_prediction_file_lock, get_current_buffer_df, orderbook_buffer
+from .buffers import fivesec_predictions, fivesec_prediction_file_lock, get_current_buffer_df, orderbook_buffer, get_current_orderbook_df
 from .indicators import process_data_for_model, process_orderbook_for_model, merge_features
 from model import predict_fivesec
 from .config import LOGS_DIR, MSK_TZ, INTERVAL_SECONDS
@@ -63,15 +63,14 @@ async def fivesec_prediction_loop(root_dir):
                 # Debug: Логируем последний элемент orderbook_buffer
                 if orderbook_buffer:
                     last_ob_item = orderbook_buffer[-1]
-                    logger.debug(f"Last orderbook buffer item keys: {list(last_ob_item.keys())}")
-                    logger.debug(f"Last orderbook timestamp: {last_ob_item.get('timestamp', 'N/A')}")
-                    if 'b' in last_ob_item and 'a' in last_ob_item:
-                        logger.debug(f"Last orderbook has bids/asks: yes, len(bids)={len(last_ob_item['b'])}, len(asks)={len(last_ob_item['a'])}")
+                    logger.debug(f"Last orderbook buffer item: {last_ob_item}")
                 else:
                     logger.debug("Orderbook buffer is empty")
 
                 # Получаем и обрабатываем данные стакана
-                orderbook_df = process_orderbook_for_model(orderbook_buffer, interval="5s")
+                orderbook_df = get_current_orderbook_df()
+                if orderbook_df is not None and not orderbook_df.empty:
+                    orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
                 if orderbook_df is None or orderbook_df.empty:
                     logger.warning("No processed order book data available for prediction")
                     await asyncio.sleep(wait_seconds)

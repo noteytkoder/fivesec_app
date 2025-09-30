@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from logger import setup_logger
 from config_manager import load_config
 from data_handler.indicators import process_orderbook_for_model, merge_features
-from data_handler.buffers import orderbook_buffer
+from data_handler.buffers import get_current_orderbook_df  # Добавляем импорт
 
 config = load_config()
 logger = setup_logger()
@@ -49,9 +49,13 @@ def train_fivesec_model(df, use_orderbook=False):
         
         # Подготовка данных
         if use_orderbook:
-            orderbook_df = process_orderbook_for_model(orderbook_buffer, interval="5s")
+            orderbook_df = get_current_orderbook_df()  # Используем DataFrame вместо deque
             if orderbook_df is None or orderbook_df.empty:
                 logger.warning(f"No order book data available for training ({model_key})")
+                return
+            orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
+            if orderbook_df is None or orderbook_df.empty:
+                logger.warning(f"Failed to process order book data for training ({model_key})")
                 return
             df = merge_features(df, orderbook_df)
             if df is None or df.empty:
