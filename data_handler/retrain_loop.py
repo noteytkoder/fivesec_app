@@ -24,13 +24,13 @@ async def fivesec_retrain_loop():
 
     while True:
         try:
-            # Перезагружаем конфигурацию на каждом цикле
             config = load_config()
             train_interval = config["data"]["fivesec_train_interval"]
 
             current_time = time.time()
             df = get_current_buffer_df()
             if df is None or len(df) < config["data"]["min_records"]:
+                logger.warning(f"Insufficient data: {len(df) if df is not None else 'None'}", extra={'source': 'retrain_loop'})
                 await asyncio.sleep(train_interval)
                 continue
 
@@ -40,20 +40,24 @@ async def fivesec_retrain_loop():
             else:
                 df = process_data_for_model(df, interval="5s")
                 if df is None or df.empty:
+                    logger.warning("Failed to process data for retrain", extra={'source': 'retrain_loop'})
                     await asyncio.sleep(train_interval)
                     continue
                 cached_processed_df = df
                 last_buffer_hash = current_hash
 
+            logger.info(f"Processed df for retrain: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'retrain_loop'})
+            if df.isna().any().any() or np.any(np.isinf(df.values)):
+                logger.warning("NaN/Inf in processed df, skipping retrain", extra={'source': 'retrain_loop'})
+                await asyncio.sleep(train_interval)
+                continue
+
             if current_time - last_train_time >= train_interval and len(df) >= config["model"].get("min_fivesec_candles", 1):
-                if df.isna().any().any() or np.any(np.isinf(df.values)):
-                    logger.warning("NaN/Inf in processed df, skipping retrain")
-                else:
-                    use_orderbook = config["model"].get("use_orderbook", False)
-                    train_fivesec_model(df, use_orderbook=use_orderbook)
-                    last_train_time = current_time
-                    logger.info(f"5-second model retrained (use_orderbook={use_orderbook}), samples={len(df)}")
+                use_orderbook = config["model"].get("use_orderbook", False)
+                train_fivesec_model(df, use_orderbook=use_orderbook)
+                last_train_time = current_time
+                logger.info(f"5-second model retrained (use_orderbook={use_orderbook}), samples={len(df)}", extra={'source': 'retrain_loop'})
             await asyncio.sleep(train_interval)
         except Exception as e:
-            logger.error(f"Error in fivesec_retrain_loop: {e}", exc_info=True)
+            logger.error(f"Error in fivesec_retrain_loop: {e}", exc_info=True, extra={'source': 'retrain_loop'})
             await asyncio.sleep(train_interval)

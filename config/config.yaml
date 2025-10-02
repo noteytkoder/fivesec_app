@@ -10,7 +10,7 @@ data:
   fivesec_train_interval: 60
   min_records: 60
 model:
-  fivesec_max_depth: 25
+  fivesec_max_depth: 10
   fivesec_n_estimators: 250
   fivesec_train_window_seconds: 7200
   min_fivesec_candles: 1

@@ -8,7 +8,7 @@ from threading import Lock
 import pandas as pd
 import hashlib  # Для хэша
 
-from .config import config
+from .config import config, logger
 
 # Глобальные буферы и блокировки
 buffer_lock = Lock()
@@ -33,20 +33,16 @@ def _get_buffer_hash(buffer_deque):
     return hashlib.md5(hash_input.encode()).hexdigest()
 
 def get_current_buffer_df():
-    """
-    Преобразует текущий буфер 5-секундных данных в pandas.DataFrame
-    с индексом timestamp (DatetimeIndex). Удаляет дубликаты.
-    Использует кэш для минимизации копий.
-    """
-    global _cached_fivesec_df, _cached_fivesec_hash  # Объявляем в начале функции
+    global _cached_fivesec_df, _cached_fivesec_hash
     with buffer_lock:
         current_hash = _get_buffer_hash(fivesec_buffer)
         if current_hash == _cached_fivesec_hash and _cached_fivesec_df is not None:
-            df = _cached_fivesec_df.copy()  # Копируем, чтобы не изменять кэш
+            df = _cached_fivesec_df.copy()
         else:
             df = pd.DataFrame(list(fivesec_buffer))
             _cached_fivesec_df = df.copy()
             _cached_fivesec_hash = current_hash
+            logger.info(f"Raw kline buffer df: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'buffers'})
     if df.empty:
         return None
     df.drop_duplicates(subset=["timestamp"], inplace=True)
@@ -55,10 +51,7 @@ def get_current_buffer_df():
     return df.sort_index()
 
 def get_current_orderbook_df():
-    """
-    Аналогично для orderbook, теперь буфер — фичи.
-    """
-    global _cached_orderbook_df, _cached_orderbook_hash  # Объявляем в начале функции
+    global _cached_orderbook_df, _cached_orderbook_hash
     with buffer_lock:
         current_hash = _get_buffer_hash(orderbook_buffer)
         if current_hash == _cached_orderbook_hash and _cached_orderbook_df is not None:
@@ -67,6 +60,7 @@ def get_current_orderbook_df():
             df = pd.DataFrame(list(orderbook_buffer))
             _cached_orderbook_df = df.copy()
             _cached_orderbook_hash = current_hash
+            logger.info(f"Raw orderbook buffer df: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'buffers'})
     if df.empty:
         return None
     df["timestamp"] = pd.to_datetime(df["timestamp"])

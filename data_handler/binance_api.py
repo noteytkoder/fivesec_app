@@ -156,16 +156,12 @@ async def producer_orderbook_ws(uri, name, queue):
             await asyncio.sleep(5)
 
 async def consumer_loop(raw_queue):
-    """
-    Обрабатывает поток kline-сообщений из очереди и пополняет буфер.
-    """
     message_count, last_fivesec_timestamp = 0, None
-
     while True:
         try:
             name, raw = await raw_queue.get()
-            data = json.loads(raw)  # Ожидаем строку JSON
-            logger.debug(f"Consumer received message: name={name}, data_keys={list(data.keys())}")
+            data = json.loads(raw)
+            logger.debug(f"Consumer received: name={name}, data_keys={list(data.keys())}", extra={'source': 'binance_api'})
             if name == "fivesec_kline" and "k" in data:
                 k = data["k"]
                 timestamp = process_timestamp(k["t"])
@@ -181,12 +177,10 @@ async def consumer_loop(raw_queue):
                     fivesec_buffer.append(item)
                 message_count += 1
                 if message_count % 100 == 0:
-                    logger.info(f"[consumer] Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}")
+                    logger.info(f"Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}", extra={'source': 'binance_api'})
             elif name == "orderbook_diff" and data.get("e") == "depthUpdate" and "b" in data and "a" in data:
-                # Предвычисление фич для diff depth
                 bids = np.array(data["b"], dtype=float)
                 asks = np.array(data["a"], dtype=float)
-                logger.debug(f"Orderbook message: len(bids)={len(bids)}, len(asks)={len(asks)}")
                 if len(bids) > 0 and len(asks) > 0:
                     bid_price_max = bids[:, 0].max()
                     ask_price_min = asks[:, 0].min()
@@ -203,13 +197,14 @@ async def consumer_loop(raw_queue):
                         "bid_volume_10": bid_volume_10,
                         "ask_volume_10": ask_volume_10
                     }
-                    logger.debug(f"Orderbook item computed: {item}")
+                    logger.debug(f"Orderbook features: imbalance={item['imbalance']:.2f}, ratio={item['bid_ask_ratio']:.2f}", extra={'source': 'binance_api'})
+                    if abs(item['bid_ask_ratio']) > 10:
+                        logger.warning(f"Orderbook outlier: ratio={item['bid_ask_ratio']}", extra={'source': 'binance_api'})
                     with buffer_lock:
                         orderbook_buffer.append(item)
-                    #logger.info(f"Order book buffer updated, size: {len(orderbook_buffer)}")
                 else:
-                    logger.warning(f"Empty bids or asks in orderbook message: bids={len(bids)}, asks={len(asks)}, data={data}")
+                    logger.warning(f"Empty bids or asks: bids={len(bids)}, asks={len(asks)}", extra={'source': 'binance_api'})
             else:
-                logger.warning(f"Invalid message: name={name}, keys={list(data.keys())}, data={data}")
+                logger.warning(f"Invalid message: name={name}, keys={list(data.keys())}", extra={'source': 'binance_api'})
         except Exception as e:
-            logger.error(f"[consumer] Error: {e}", exc_info=True)
+            logger.error(f"Consumer error: {e}", exc_info=True, extra={'source': 'binance_api'})

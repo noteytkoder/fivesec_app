@@ -72,6 +72,16 @@ def train_fivesec_model(df, use_orderbook=False):
         if use_orderbook:
             features += ["spread", "mid_price", "bid_ask_ratio", "imbalance", "bid_volume_10", "ask_volume_10"]
         
+        # Определение признаков
+        # features = [
+        #     "close", "rsi", "sma", "volume", "log_volume",
+        #     "close_lag_1", "close_lag_2", "close_lag_3",
+        #     "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+        #     "sma_lag_1", "sma_lag_2", "sma_lag_3"
+        # ]
+        # if use_orderbook:
+        #     features += ["bid_ask_ratio", "imbalance"]
+        
         target = df["close"].shift(-1)
         valid_idx = target.notna()
         X = df[features][valid_idx]
@@ -129,7 +139,7 @@ def train_fivesec_model(df, use_orderbook=False):
             max_features=config["model"].get("max_features", "sqrt"),
             random_state=42
         )
-
+        logger.info(f"Target y describe: mean={y.mean()}, std={y.std()}, min={y.min()}, max={y.max()}")
         model.fit(X_scaled, y)
         
         # Оценка модели
@@ -186,6 +196,15 @@ def predict_fivesec(features, use_orderbook=False):
         ]
         if use_orderbook:
             expected_features += ["spread", "mid_price", "bid_ask_ratio", "imbalance", "bid_volume_10", "ask_volume_10"]
+        
+        # expected_features = [
+        #     "close", "rsi", "sma", "volume", "log_volume",
+        #     "close_lag_1", "close_lag_2", "close_lag_3",
+        #     "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+        #     "sma_lag_1", "sma_lag_2", "sma_lag_3"
+        # ]
+        # if use_orderbook:
+        #     expected_features += ["bid_ask_ratio", "imbalance"]
         
         if not all(col in features.columns for col in expected_features):
             logger.error(f"Missing features in prediction input ({model_key}): {features.columns.tolist()}")

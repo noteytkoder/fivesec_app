@@ -6,8 +6,9 @@ SMA, лагов и агрегации свечей.
 
 import pandas as pd
 import numpy as np
+import logging  # Добавлен импорт
 from .config import config, MSK_TZ, logger
-from .buffers import get_current_orderbook_df  # Добавляем импорт
+from .buffers import get_current_orderbook_df
 
 def process_timestamp(ms_timestamp):
     """Преобразует timestamp (мс) в pandas.Timestamp с TZ=MSK_TZ."""
@@ -23,7 +24,7 @@ def ensure_datetime_index(df):
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df.set_index("timestamp", inplace=True)
         else:
-            logger.error("No 'timestamp' column found in DataFrame")
+            logger.error("No 'timestamp' column found in DataFrame", extra={'source': 'indicators'})
             return None
     return df.sort_index()
 
@@ -49,9 +50,11 @@ def calculate_indicators(df):
             shifts = pd.concat([df[col].shift(lag) for lag in lags], axis=1)
             shifts.columns = [f"{col}_lag_{lag}" for lag in lags]
             df = pd.concat([df, shifts], axis=1)
-        return df.dropna()
+        df = df.dropna()
+        logger.info(f"After indicators: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'indicators'})
+        return df
     except Exception as e:
-        logger.error(f"Error calculating indicators: {e}")
+        logger.error(f"Error calculating indicators: {e}", exc_info=True, extra={'source': 'indicators'})
         return None
 
 def process_data_for_model(df, interval="5s"):
@@ -62,31 +65,35 @@ def process_data_for_model(df, interval="5s"):
     try:
         df = ensure_datetime_index(df)
         if df is None:
+            logger.error("Invalid kline DataFrame", extra={'source': 'indicators'})
             return None
         df = df.resample(interval).agg({
             "open": "first", "high": "max", "low": "min",
             "close": "last", "volume": "sum"
-        }).ffill().dropna()  # Заменил interpolate на ffill — быстрее, если данные регулярны
+        }).ffill().dropna()
+        logger.info(f"After resample ({interval}): shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'indicators'})
         return calculate_indicators(df)
     except Exception as e:
-        logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True)
+        logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True, extra={'source': 'indicators'})
         return None
 
 def process_orderbook_for_model(orderbook_df, interval="5s"):
     """
-    Обработка буфера стакана: теперь фичи уже в df, просто ресэмплинг.
-    (Предвычисление перенесено в consumer)
+    Обработка буфера стакана: ресэмплинг и проверка данных.
     """
     try:
         if orderbook_df is None or orderbook_df.empty:
+            logger.warning("Empty orderbook DataFrame", extra={'source': 'indicators'})
             return None
-        # Handle NaN defaults
         orderbook_df["bid_ask_ratio"] = orderbook_df["bid_ask_ratio"].fillna(1.0)
         orderbook_df["imbalance"] = orderbook_df["imbalance"].fillna(0.0)
         orderbook_df = orderbook_df.resample(interval).mean().ffill().dropna()
+        ratio_outliers = (orderbook_df['bid_ask_ratio'].abs() > 10).sum()
+        logger.info(f"Processed orderbook ({interval}): shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}, ratio_outliers={ratio_outliers}", extra={'source': 'indicators'})
+        logger.debug(f"Orderbook stats: ratio_max={orderbook_df['bid_ask_ratio'].max():.2f}, imbalance_std={orderbook_df['imbalance'].std():.2f}", extra={'source': 'indicators'})
         return orderbook_df
     except Exception as e:
-        logger.error(f"Error processing order book for model: {e}", exc_info=True)
+        logger.error(f"Error processing order book: {e}", exc_info=True, extra={'source': 'indicators'})
         return None
 
 def merge_features(kline_df, orderbook_df):
@@ -97,10 +104,9 @@ def merge_features(kline_df, orderbook_df):
         kline_df = ensure_datetime_index(kline_df)
         orderbook_df = ensure_datetime_index(orderbook_df)
         if kline_df is None or orderbook_df is None:
-            logger.error("Invalid input for merge_features: kline_df or orderbook_df is None")
+            logger.error("Invalid input for merge_features", extra={'source': 'indicators'})
             return None
         
-        # Нормализуем часовые пояса к Europe/Moscow
         kline_df.index = kline_df.index.tz_convert(MSK_TZ)
         orderbook_df.index = orderbook_df.index.tz_convert(MSK_TZ)
 
@@ -109,9 +115,13 @@ def merge_features(kline_df, orderbook_df):
             on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=5)
         ).set_index("timestamp")
         if merged_df.empty:
-            logger.error("Merged DataFrame is empty")
+            logger.error("Merged DataFrame is empty", extra={'source': 'indicators'})
             return None
+        logger.info(f"Merged: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}", extra={'source': 'indicators'})
+        if 'bid_ask_ratio' in merged_df.columns:
+            corr_imbalance = merged_df['imbalance'].corr(merged_df['close'])
+            logger.debug(f"Orderbook corr with close: imbalance={corr_imbalance:.2f}", extra={'source': 'indicators'})
         return merged_df.dropna()
     except Exception as e:
-        logger.error(f"Error merging kline and order book features: {e}", exc_info=True)
+        logger.error(f"Error merging features: {e}", exc_info=True, extra={'source': 'indicators'})
         return None
