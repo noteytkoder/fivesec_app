@@ -24,11 +24,9 @@ _cached_orderbook_df = None
 _cached_orderbook_hash = None
 
 def _get_buffer_hash(buffer_deque):
-    """Простой хэш по len и last timestamp"""
     if not buffer_deque:
         return None
     last_item = buffer_deque[-1]
-    # Исправление: конкатенируем строки, затем encode
     hash_input = str(len(buffer_deque)) + str(last_item.get("timestamp", ""))
     return hashlib.md5(hash_input.encode()).hexdigest()
 

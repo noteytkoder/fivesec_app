@@ -267,6 +267,7 @@ def register_online_callbacks(app, config, buffer_deque):
         else:
             return Response(f"<table>{html_row}</table>", mimetype="text/html")
 
+    import hashlib
 
     # Новый callback без pandas
     @app.callback(
@@ -280,7 +281,14 @@ def register_online_callbacks(app, config, buffer_deque):
     def update_orderbook_status(n):
         global _cached_status, _cached_buffer_hash
         with buffer_lock:
-            current_hash = hash(len(orderbook_buffer))  # Простой хэш по размеру
+            # Используем более надёжный хэш
+            if not orderbook_buffer:
+                current_hash = None
+            else:
+                last_item = orderbook_buffer[-1]
+                hash_input = str(len(orderbook_buffer)) + str(last_item.get("timestamp", ""))
+                current_hash = hashlib.md5(hash_input.encode()).hexdigest()
+
             if current_hash == _cached_buffer_hash and _cached_status is not None:
                 logger.debug("Using cached orderbook status")
                 return _cached_status
