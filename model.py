@@ -10,30 +10,30 @@ from sklearn.preprocessing import StandardScaler
 from logger import setup_logger
 from config_manager import load_config
 from data_handler.indicators import process_orderbook_for_model, merge_features
-from data_handler.buffers import get_current_orderbook_df  # Добавляем импорт
+from data_handler.buffers import get_current_orderbook_df
 
 config = load_config()
 logger = setup_logger()
 
-# Хранилище моделей и скейлеров
+# Хранилище моделей, скейлеров и bias corrections
 models = {
-    "kline_only": None,  # Модель без стакана
-    "kline_with_orderbook": None  # Модель с данными стакана
+    "kline_only": None,
+    "kline_with_orderbook": None
 }
 scalers = {
-    "kline_only": None,  # Скейлер для модели без стакана
-    "kline_with_orderbook": None  # Скейлер для модели с данными стакана
+    "kline_only": None,
+    "kline_with_orderbook": None
+}
+bias_corrections = {
+    "kline_only": 0.0,
+    "kline_with_orderbook": 0.0
 }
 
 def train_fivesec_model(df, use_orderbook=False):
     """
     Обучение 5-секундной модели.
-    
-    Parameters:
-    - df: pandas.DataFrame с данными kline (индекс — DatetimeIndex, столбцы включают 'close', 'rsi', 'sma', etc.)
-    - use_orderbook: bool, использовать ли данные стакана
     """
-    global models, scalers
+    global models, scalers, bias_corrections
     try:
         model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
         logger.debug(f"train_fivesec_model ({model_key}): Input dataframe shape: {df.shape}, columns: {df.columns.tolist()}")
@@ -49,7 +49,7 @@ def train_fivesec_model(df, use_orderbook=False):
         
         # Подготовка данных
         if use_orderbook:
-            orderbook_df = get_current_orderbook_df()  # Используем DataFrame вместо deque
+            orderbook_df = get_current_orderbook_df()
             if orderbook_df is None or orderbook_df.empty:
                 logger.warning(f"No order book data available for training ({model_key})")
                 return
@@ -70,17 +70,12 @@ def train_fivesec_model(df, use_orderbook=False):
             "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
         if use_orderbook:
-            features += ["spread", "mid_price", "bid_ask_ratio", "imbalance", "bid_volume_10", "ask_volume_10"]
-        
-        # Определение признаков
-        # features = [
-        #     "close", "rsi", "sma", "volume", "log_volume",
-        #     "close_lag_1", "close_lag_2", "close_lag_3",
-        #     "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-        #     "sma_lag_1", "sma_lag_2", "sma_lag_3"
-        # ]
-        # if use_orderbook:
-        #     features += ["bid_ask_ratio", "imbalance"]
+            features += [
+                "spread", "mid_price", "bid_ask_ratio", "imbalance",
+                "bid_volume_10", "ask_volume_10",
+                "bid_ask_ratio_lag_1", "bid_ask_ratio_lag_2", "bid_ask_ratio_lag_3",
+                "imbalance_lag_1", "imbalance_lag_2", "imbalance_lag_3"
+            ]
         
         target = df["close"].shift(-1)
         valid_idx = target.notna()
@@ -101,27 +96,28 @@ def train_fivesec_model(df, use_orderbook=False):
             logger.warning(f"Zero standard deviation in features ({model_key}): {X.std()}")
             return
         
-        # diagnostic block (add before scaler.fit_transform)
+        # Диагностика
         logger.info(f"{model_key} before train: X.shape={X.shape}, y.shape={y.shape}")
         logger.info(f"{model_key} cols: {X.columns.tolist()}")
         logger.info(f"{model_key} nan per col:\n{X.isna().sum()}")
         logger.info(f"{model_key} nunique per col:\n{X.nunique()}")
         logger.info(f"{model_key} std per col:\n{X.std()}")
         logger.info(f"{model_key} describe:\n{X.describe().T}")
+        if use_orderbook:
+            logger.info(f"{model_key} correlations with target:\n{X[['bid_ask_ratio', 'imbalance']].corrwith(y)}")
         
         # Нормализация данных
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
         logger.debug(f"train_fivesec_model ({model_key}): Data normalized, X_scaled shape: {X_scaled.shape}")
         
-        # wrap back to DataFrame to inspect
         Xs_df = pd.DataFrame(X_scaled, index=X.index, columns=X.columns)
         logger.info(f"{model_key} after scaling: shape={Xs_df.shape}")
         logger.info(f"{model_key} scaled mean (approx):\n{Xs_df.mean().round(6)}")
         logger.info(f"{model_key} scaled std (approx):\n{Xs_df.std().round(6)}")
         logger.info(f"{model_key} any NaN after scaling: {Xs_df.isna().any().any()}")
         
-        # Настройка параметров модели
+        # Настройка параметров модели с усиленной регуляризацией
         max_depth = config["model"]["fivesec_max_depth"]
         if max_depth in (0, None):
             logger.info(f"fivesec_max_depth is 0 or null, setting to None for unlimited tree depth ({model_key})")
@@ -130,23 +126,26 @@ def train_fivesec_model(df, use_orderbook=False):
             logger.warning(f"Invalid fivesec_max_depth: {max_depth}, using default value 15 ({model_key})")
             max_depth = 15
         
-        # Создание и обучение модели
         model = RandomForestRegressor(
             n_estimators=config["model"]["fivesec_n_estimators"],
             max_depth=max_depth,
-            min_samples_split=config["model"].get("min_samples_split", 2),
-            min_samples_leaf=config["model"].get("min_samples_leaf", 1),
+            min_samples_split=config["model"].get("min_samples_split", 5),  # Увеличено
+            min_samples_leaf=config["model"].get("min_samples_leaf", 5),   # Увеличено
             max_features=config["model"].get("max_features", "sqrt"),
             random_state=42
         )
         logger.info(f"Target y describe: mean={y.mean()}, std={y.std()}, min={y.min()}, max={y.max()}")
         model.fit(X_scaled, y)
         
-        # Оценка модели
-        y_pred = model.predict(X_scaled)
-        r2 = r2_score(y, y_pred)
+        # Вычисление mean bias correction
+        y_pred_train = model.predict(X_scaled)
+        bias = np.mean(y - y_pred_train)
+        bias_corrections[model_key] = bias
+        logger.info(f"{model_key} bias correction calculated: mean_bias={bias:.4f}")
         
-        # Сохранение модели и скейлера
+        # Оценка модели
+        r2 = r2_score(y, y_pred_train)
+        
         models[model_key] = model
         scalers[model_key] = scaler
         logger.info(f"{model_key} model trained, R^2={r2:.4f}, samples={len(X)}")
@@ -156,12 +155,6 @@ def train_fivesec_model(df, use_orderbook=False):
 def select_model(use_orderbook=False):
     """
     Выбор модели по флагу.
-    
-    Parameters:
-    - use_orderbook: bool, использовать ли модель с данными стакана
-    
-    Returns:
-    - Модель или None, если модель не инициализирована
     """
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
     if models[model_key] is None:
@@ -172,13 +165,6 @@ def select_model(use_orderbook=False):
 def predict_fivesec(features, use_orderbook=False):
     """
     Прогноз для 5-секундной модели.
-    
-    Parameters:
-    - features: pandas.DataFrame с признаками
-    - use_orderbook: bool, использовать ли модель с данными стакана
-    
-    Returns:
-    - float: предсказанная цена или None в случае ошибки
     """
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
     try:
@@ -195,16 +181,12 @@ def predict_fivesec(features, use_orderbook=False):
             "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
         if use_orderbook:
-            expected_features += ["spread", "mid_price", "bid_ask_ratio", "imbalance", "bid_volume_10", "ask_volume_10"]
-        
-        # expected_features = [
-        #     "close", "rsi", "sma", "volume", "log_volume",
-        #     "close_lag_1", "close_lag_2", "close_lag_3",
-        #     "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-        #     "sma_lag_1", "sma_lag_2", "sma_lag_3"
-        # ]
-        # if use_orderbook:
-        #     expected_features += ["bid_ask_ratio", "imbalance"]
+            expected_features += [
+                "spread", "mid_price", "bid_ask_ratio", "imbalance",
+                "bid_volume_10", "ask_volume_10",
+                "bid_ask_ratio_lag_1", "bid_ask_ratio_lag_2", "bid_ask_ratio_lag_3",
+                "imbalance_lag_1", "imbalance_lag_2", "imbalance_lag_3"
+            ]
         
         if not all(col in features.columns for col in expected_features):
             logger.error(f"Missing features in prediction input ({model_key}): {features.columns.tolist()}")
@@ -213,9 +195,15 @@ def predict_fivesec(features, use_orderbook=False):
             logger.error(f"NaN or Inf values in prediction features ({model_key})")
             return None
         
-        features = features[expected_features]  # Ensure correct feature order
+        features = features[expected_features]
         features_scaled = scaler.transform(features)
-        return model.predict(features_scaled)[0]
+        raw_pred = model.predict(features_scaled)[0]
+        
+        # Применение mean bias correction
+        bias = bias_corrections[model_key]
+        corrected_pred = raw_pred + bias
+        logger.debug(f"{model_key} prediction: raw={raw_pred:.4f}, corrected={corrected_pred:.4f}")
+        return corrected_pred
     except Exception as e:
         logger.error(f"{model_key} prediction error: {e}", exc_info=True)
         return None
