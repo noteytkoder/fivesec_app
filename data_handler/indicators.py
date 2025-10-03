@@ -24,7 +24,7 @@ def ensure_datetime_index(df):
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df.set_index("timestamp", inplace=True)
         else:
-            logger.error("No 'timestamp' column found in DataFrame", extra={'source': 'indicators'})
+            logger.error("No 'timestamp' column found in DataFrame")
             return None
     return df.sort_index()
 
@@ -51,10 +51,12 @@ def calculate_indicators(df):
             shifts.columns = [f"{col}_lag_{lag}" for lag in lags]
             df = pd.concat([df, shifts], axis=1)
         df = df.dropna()
-        logger.info(f"After indicators: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'indicators'})
+        logger.info(f"After indicators: shape={df.shape}, NaN={df.isna().sum().sum()}")
+        logger.debug(f"Indicators df head:\n{df.head(5)}")
+        logger.debug(f"Indicators df dtypes:\n{df.dtypes}")
         return df
     except Exception as e:
-        logger.error(f"Error calculating indicators: {e}", exc_info=True, extra={'source': 'indicators'})
+        logger.error(f"Error calculating indicators: {e}")
         return None
 
 def process_data_for_model(df, interval="5s"):
@@ -65,69 +67,56 @@ def process_data_for_model(df, interval="5s"):
     try:
         df = ensure_datetime_index(df)
         if df is None:
-            logger.error("Invalid kline DataFrame", extra={'source': 'indicators'})
             return None
         df = df.resample(interval).agg({
             "open": "first", "high": "max", "low": "min",
             "close": "last", "volume": "sum"
         }).ffill().dropna()
-        logger.info(f"After resample ({interval}): shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'indicators'})
+        logger.info(f"After resample ({interval}): shape={df.shape}, NaN={df.isna().sum().sum()}")
+        logger.debug(f"Resampled df head:\n{df.head(5)}")
+        logger.debug(f"Resampled df dtypes:\n{df.dtypes}")
         return calculate_indicators(df)
     except Exception as e:
-        logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True, extra={'source': 'indicators'})
+        logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True)
         return None
 
 def process_orderbook_for_model(orderbook_df, interval="5s"):
     """
-    Обработка буфера стакана: ресэмплинг, нормализация и добавление лагов.
+    Обработка буфера стакана: ресэмплинг и добавление дельты mid_price.
     """
     try:
         if orderbook_df is None or orderbook_df.empty:
-            logger.warning("Empty orderbook DataFrame", extra={'source': 'indicators'})
+            logger.warning("No order book data available")
             return None
-        orderbook_df["bid_ask_ratio"] = orderbook_df["bid_ask_ratio"].fillna(1.0)
-        orderbook_df["imbalance"] = orderbook_df["imbalance"].fillna(0.0)
+        logger.info(f"orderbook_df raw: shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
+        logger.debug(f"orderbook_df raw head:\n{orderbook_df.head(5)}")
+        logger.debug(f"orderbook_df raw dtypes:\n{orderbook_df.dtypes}")
         
-        # Логарифмирование bid_ask_ratio для снижения skew
-        orderbook_df["bid_ask_ratio"] = np.log1p(orderbook_df["bid_ask_ratio"])
+        # Рассчитываем дельту mid_price
+        orderbook_df["mid_price_delta"] = orderbook_df["mid_price"].diff().fillna(0.0)
         
-        # Z-score нормализация для imbalance и bid_ask_ratio
-        for col in ["bid_ask_ratio", "imbalance"]:
-            mean = orderbook_df[col].mean()
-            std = orderbook_df[col].std()
-            if std > 0:
-                orderbook_df[col] = (orderbook_df[col] - mean) / std
-            logger.debug(f"Normalized {col}: mean={mean:.4f}, std={std:.4f}", extra={'source': 'indicators'})
+        # Удаляем mid_price, так как он коллинеарен с close
+        orderbook_df = orderbook_df.drop(columns=["mid_price", "bid_volume_10", "ask_volume_10"], errors="ignore")
         
-        # Клиппинг после нормализации
-        orderbook_df["bid_ask_ratio"] = orderbook_df["bid_ask_ratio"].clip(-5, 5)
-        orderbook_df["imbalance"] = orderbook_df["imbalance"].clip(-5, 5)
-        
-        # Добавление лагов для bid_ask_ratio и imbalance
-        lags = range(1, 4)
-        for col in ["bid_ask_ratio", "imbalance"]:
-            shifts = pd.concat([orderbook_df[col].shift(lag) for lag in lags], axis=1)
-            shifts.columns = [f"{col}_lag_{lag}" for lag in lags]
-            orderbook_df = pd.concat([orderbook_df, shifts], axis=1)
-        
+        # Ресэмплинг
         orderbook_df = orderbook_df.resample(interval).mean().ffill().dropna()
-        ratio_outliers = (orderbook_df['bid_ask_ratio'].abs() > 5).sum()
-        logger.info(f"Processed orderbook ({interval}): shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}, ratio_outliers={ratio_outliers}", extra={'source': 'indicators'})
-        logger.debug(f"Orderbook stats: ratio_max={orderbook_df['bid_ask_ratio'].max():.2f}, imbalance_std={orderbook_df['imbalance'].std():.2f}", extra={'source': 'indicators'})
+        logger.info(f"Processed orderbook ({interval}): shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
+        logger.debug(f"Processed orderbook head:\n{orderbook_df.head(5)}")
+        logger.debug(f"Processed orderbook dtypes:\n{orderbook_df.dtypes}")
         return orderbook_df
     except Exception as e:
-        logger.error(f"Error processing order book: {e}", exc_info=True, extra={'source': 'indicators'})
+        logger.error(f"Error processing order book: {e}", exc_info=True)
         return None
 
 def merge_features(kline_df, orderbook_df):
     """
-    Объединение признаков kline и стакана по времени с ffill и staleness check.
+    Объединение признаков kline и стакана по времени.
     """
     try:
         kline_df = ensure_datetime_index(kline_df)
         orderbook_df = ensure_datetime_index(orderbook_df)
         if kline_df is None or orderbook_df is None:
-            logger.error("Invalid input for merge_features", extra={'source': 'indicators'})
+            logger.error("Invalid input for merge_features")
             return None
         
         kline_df.index = kline_df.index.tz_convert(MSK_TZ)
@@ -138,24 +127,15 @@ def merge_features(kline_df, orderbook_df):
             on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=5)
         ).set_index("timestamp")
         if merged_df.empty:
-            logger.error("Merged DataFrame is empty", extra={'source': 'indicators'})
+            logger.error("Merged DataFrame is empty")
             return None
-        
-        # Заполнение NaN с помощью ffill, но с проверкой staleness
-        before_fill_na = merged_df.isna().sum().sum()
-        merged_df = merged_df.ffill(limit=2)  # Ограничение: не более 2 строк (10 секунд)
-        after_fill_na = merged_df.isna().sum().sum()
-        logger.info(f"Merged: shape={merged_df.shape}, NaN before ffill={before_fill_na}, NaN after ffill={after_fill_na}", extra={'source': 'indicators'})
-        
-        if 'bid_ask_ratio' in merged_df.columns:
-            corr_imbalance = merged_df['imbalance'].corr(merged_df['close'])
-            corr_ratio = merged_df['bid_ask_ratio'].corr(merged_df['close'])
-            logger.debug(f"Orderbook corr with close: imbalance={corr_imbalance:.2f}, bid_ask_ratio={corr_ratio:.2f}", extra={'source': 'indicators'})
-        
-        # Отбрасываем строки, где всё ещё есть NaN
-        merged_df = merged_df.dropna()
-        logger.info(f"After dropna: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}", extra={'source': 'indicators'})
-        return merged_df
+        logger.info(f"Merged: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}")
+        logger.debug(f"Merged df head:\n{merged_df.head(5)}")
+        logger.debug(f"Merged df dtypes:\n{merged_df.dtypes}")
+        if 'imbalance_10' in merged_df.columns:
+            corr_imbalance = merged_df['imbalance_10'].corr(merged_df['close'])
+            logger.debug(f"Orderbook corr with close: imbalance_10={corr_imbalance:.2f}")
+        return merged_df.dropna()
     except Exception as e:
-        logger.error(f"Error merging features: {e}", exc_info=True, extra={'source': 'indicators'})
+        logger.error(f"Error merging features: {e}", exc_info=True)
         return None

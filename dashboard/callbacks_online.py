@@ -269,7 +269,6 @@ def register_online_callbacks(app, config, buffer_deque):
 
     import hashlib
 
-    # Новый callback без pandas
     @app.callback(
         [
             Output("orderbook-buffer-size", "children"),
@@ -281,7 +280,7 @@ def register_online_callbacks(app, config, buffer_deque):
     def update_orderbook_status(n):
         global _cached_status, _cached_buffer_hash
         with buffer_lock:
-            # Используем более надёжный хэш
+            # Используем хэш для проверки изменений в буфере
             if not orderbook_buffer:
                 current_hash = None
             else:
@@ -289,23 +288,26 @@ def register_online_callbacks(app, config, buffer_deque):
                 hash_input = str(len(orderbook_buffer)) + str(last_item.get("timestamp", ""))
                 current_hash = hashlib.md5(hash_input.encode()).hexdigest()
 
+            # Если хэш не изменился, возвращаем кэшированный статус
             if current_hash == _cached_buffer_hash and _cached_status is not None:
                 logger.debug("Using cached orderbook status")
                 return _cached_status
             
+            # Формируем статус
             if not orderbook_buffer:
-                status = ("Buffer Size: 0", "Last Update: N/A", "Bid/Ask Imbalance: N/A")
+                status = ("Buffer Size: 0", "Last Update: N/A", "Bid/Ask Imbalance (Top-10): N/A")
             else:
                 latest = orderbook_buffer[-1]
                 buffer_size = len(orderbook_buffer)
                 last_update = pd.to_datetime(latest["timestamp"]).tz_convert(MSK_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
-                imbalance = latest["imbalance"]
+                imbalance_10 = latest["imbalance_10"]
                 status = (
                     f"Buffer Size: {buffer_size}",
                     f"Last Update: {last_update}",
-                    f"Bid/Ask Imbalance: {imbalance:.2f}"
+                    f"Bid/Ask Imbalance (Top-10): {imbalance_10:.2f}"
                 )
             
+            # Обновляем кэш
             _cached_status = status
             _cached_buffer_hash = current_hash
         

@@ -3,8 +3,8 @@ auth:
   password: qwerty63
   username: admin
 data:
-  buffer_orderbook_size: 5000
-  buffer_size: 5000
+  buffer_orderbook_size: 500
+  buffer_size: 500
   csv_write_interval: 30
   download_range: 1hour
   fivesec_train_interval: 60
@@ -14,8 +14,8 @@ model:
   fivesec_n_estimators: 250
   fivesec_train_window_seconds: 7200
   min_fivesec_candles: 1
-  min_samples_leaf: 1
-  min_samples_split: 2
+  min_samples_leaf: 10
+  min_samples_split: 10
   use_orderbook: true
 timezone: Europe/Moscow
 visual:
