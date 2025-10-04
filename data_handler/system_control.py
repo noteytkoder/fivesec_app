@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .config import logger
 
-from .binance_api import producer_ws, consumer_loop, producer_orderbook_ws
+from .binance_api import producer_ws, consumer_loop, producer_orderbook_ws, orderbook_snapshot_loop
 from .prediction_loop import fivesec_prediction_loop
 from .retrain_loop import fivesec_retrain_loop
 from .errors_loop import update_fivesec_errors_loop

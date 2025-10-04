@@ -10,12 +10,12 @@ data:
   fivesec_train_interval: 60
   min_records: 60
 model:
-  fivesec_max_depth: 0
+  fivesec_max_depth: 25
   fivesec_n_estimators: 250
   fivesec_train_window_seconds: 7200
   min_fivesec_candles: 1
-  min_samples_leaf: 10
-  min_samples_split: 10
+  min_samples_leaf: 1
+  min_samples_split: 11
   use_orderbook: true
 timezone: Europe/Moscow
 visual:

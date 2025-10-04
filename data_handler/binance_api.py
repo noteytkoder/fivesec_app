@@ -15,9 +15,14 @@ from .buffers import buffer_lock, fivesec_buffer, orderbook_buffer
 from .indicators import process_timestamp, process_data_for_model
 from model import train_fivesec_model
 import time  
+from sortedcontainers import SortedDict
 
 last_orderbook_update_id = None
 last_orderbook_update_id = None  # Глобальная переменная для lastUpdateId снапшота
+
+local_bids = SortedDict(reverse=True)  # Цены bids убывание, значение — volume
+local_asks = SortedDict()  # Цены asks возрастание, значение — volume
+last_update_id = None
 
 async def fetch_fivesec_historical_data():
     """
@@ -80,11 +85,7 @@ async def fetch_fivesec_historical_data():
         logger.error(f"Error fetching 5-second historical data: {e}", exc_info=True)
 
 async def fetch_orderbook_snapshot():
-    """
-    Загружает моментальный снимок стакана (order book) через REST API Binance.
-    Предвычисляет фичи и добавляет в буфер.
-    """
-    global last_update_id
+    global last_update_id, local_bids, local_asks
     try:
         url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=100"
         response = requests.get(url, timeout=15)
@@ -93,58 +94,85 @@ async def fetch_orderbook_snapshot():
         data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ).isoformat()
         logger.info("Order book snapshot fetched")
 
-        # Сохраняем lastUpdateId
+        # Обновляем last_update_id
         last_update_id = data.get("lastUpdateId")
         logger.debug(f"Updated last_update_id: {last_update_id}")
 
-        if "bids" in data and "asks" in data:
-            bids = np.array(data["bids"], dtype=float)
-            asks = np.array(data["asks"], dtype=float)
+        # Очищаем и загружаем локальный стакан
+        local_bids.clear()
+        local_asks.clear()
+        for price, volume in data["bids"]:
+            price = float(price)
+            volume = float(volume)
+            if volume > 0:
+                local_bids[price] = volume
+        for price, volume in data["asks"]:
+            price = float(price)
+            volume = float(volume)
+            if volume > 0:
+                local_asks[price] = volume
 
-            if len(bids) > 0 and len(asks) > 0:
-                best_bid = bids[0, 0]
-                best_ask = asks[0, 0]
-                spread_5 = np.mean(asks[:5, 0] - bids[:5, 0]) if len(bids) >= 5 and len(asks) >= 5 else best_ask - best_bid
-                bid_volume_10 = bids[:10, 1].sum() if len(bids) >= 10 else bids[:, 1].sum()
-                ask_volume_10 = asks[:10, 1].sum() if len(asks) >= 10 else asks[:, 1].sum()
-                total_volume_10 = bid_volume_10 + ask_volume_10
-                imbalance_10 = (bid_volume_10 - ask_volume_10) / total_volume_10 if total_volume_10 > 0 else 0.0
-                rel_bid_volume_10 = bid_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
-                rel_ask_volume_10 = ask_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
-                
-                delta_bid_vol_10 = 0.0
-                delta_ask_vol_10 = 0.0
-                with buffer_lock:
-                    if orderbook_buffer:
-                        last_item = orderbook_buffer[-1]
-                        delta_bid_vol_10 = bid_volume_10 - last_item.get("bid_volume_10", bid_volume_10)
-                        delta_ask_vol_10 = ask_volume_10 - last_item.get("ask_volume_10", ask_volume_10)
-
-                if spread_5 <= 0:
-                    logger.warning(f"Invalid spread_5: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
-                    return
-
-                item = {
-                    "timestamp": data["timestamp"],
-                    "spread_5": spread_5,
-                    "mid_price": (best_ask + best_bid) / 2,
-                    "imbalance_10": imbalance_10,
-                    "rel_bid_volume_10": rel_bid_volume_10,
-                    "rel_ask_volume_10": rel_ask_volume_10,
-                    "bid_volume_10": bid_volume_10,
-                    "ask_volume_10": ask_volume_10,
-                    "delta_bid_vol_10": delta_bid_vol_10,
-                    "delta_ask_vol_10": delta_ask_vol_10
-                }
-                logger.debug(f"Orderbook snapshot: spread_5={spread_5:.5f}, imbalance_10={imbalance_10:.3f}, rel_bid_volume_10={rel_bid_volume_10:.3f}")
-                if abs(rel_bid_volume_10 - rel_ask_volume_10) > 0.99:
-                    logger.warning(f"Orderbook snapshot outlier: rel_bid_volume_10={rel_bid_volume_10}, rel_ask_volume_10={rel_ask_volume_10}")
-                
-                with buffer_lock:
-                    orderbook_buffer.append(item)
+        # Вычисляем фичи на полном стакане
+        item = calculate_orderbook_features(data["timestamp"])
+        if item is not None:
+            with buffer_lock:
+                orderbook_buffer.append(item)
     except Exception as e:
         logger.error(f"Error fetching orderbook snapshot: {e}", exc_info=True)
 
+def calculate_orderbook_features(timestamp):
+    if not local_bids or not local_asks:
+        logger.warning("Local orderbook empty, skipping features")
+        return None
+
+    # Best levels
+    best_bid = local_bids.peekitem(0)[0]  # Highest bid
+    best_ask = local_asks.peekitem(0)[0]  # Lowest ask
+
+    # Top 5 spread avg
+    bid_prices = list(local_bids.keys())[:5]
+    ask_prices = list(local_asks.keys())[:5]
+    spread_5 = np.mean([ask_prices[i] - bid_prices[i] for i in range(min(5, len(bid_prices), len(ask_prices)))]) if bid_prices and ask_prices else best_ask - best_bid
+
+    if spread_5 <= 0:
+        logger.warning(f"Invalid spread_5 in local orderbook: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
+        return None
+
+    # Top 10 volumes
+    bid_volume_10 = sum(local_bids[price] for price in list(local_bids.keys())[:10])
+    ask_volume_10 = sum(local_asks[price] for price in list(local_asks.keys())[:10])
+    total_volume_10 = bid_volume_10 + ask_volume_10
+    imbalance_10 = (bid_volume_10 - ask_volume_10) / total_volume_10 if total_volume_10 > 0 else 0.0
+    rel_bid_volume_10 = bid_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
+    rel_ask_volume_10 = ask_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
+
+    # Deltas (от предыдущего, если есть)
+    delta_bid_vol_10 = 0.0
+    delta_ask_vol_10 = 0.0
+    with buffer_lock:
+        if orderbook_buffer:
+            last_item = orderbook_buffer[-1]
+            delta_bid_vol_10 = bid_volume_10 - last_item.get("bid_volume_10", bid_volume_10)
+            delta_ask_vol_10 = ask_volume_10 - last_item.get("ask_volume_10", ask_volume_10)
+
+    item = {
+        "timestamp": timestamp,
+        "spread_5": spread_5,
+        "mid_price": (best_ask + best_bid) / 2,
+        "imbalance_10": imbalance_10,
+        "rel_bid_volume_10": rel_bid_volume_10,
+        "rel_ask_volume_10": rel_ask_volume_10,
+        "bid_volume_10": bid_volume_10,
+        "ask_volume_10": ask_volume_10,
+        "delta_bid_vol_10": delta_bid_vol_10,
+        "delta_ask_vol_10": delta_ask_vol_10
+    }
+
+    logger.debug(f"Orderbook features: spread_5={spread_5:.5f}, imbalance_10={imbalance_10:.3f}, rel_bid_volume_10={rel_bid_volume_10:.3f}")
+    if abs(rel_bid_volume_10 - rel_ask_volume_10) > 0.99:
+        logger.warning(f"Orderbook outlier: rel_bid_volume_10={rel_bid_volume_10}, rel_ask_volume_10={rel_ask_volume_10}")
+
+    return item
 
 async def orderbook_snapshot_loop(interval: int = 5):
     """
@@ -232,63 +260,35 @@ async def consumer_loop(raw_queue):
                     logger.debug(f"Ignoring outdated orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
                     continue
                 if U <= last_update_id + 1 <= u:
-                    # Дельта валидна, применяем
+                    # Применяем дельту к локальному стакану
+                    for price, volume in data["b"]:
+                        price = float(price)
+                        volume = float(volume)
+                        if volume == 0:
+                            local_bids.pop(price, None)
+                        else:
+                            local_bids[price] = volume
+                    for price, volume in data["a"]:
+                        price = float(price)
+                        volume = float(volume)
+                        if volume == 0:
+                            local_asks.pop(price, None)
+                        else:
+                            local_asks[price] = volume
+
+                    # Обновляем last_update_id
                     last_update_id = u
-                    logger.debug(f"Applying orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
+                    logger.debug(f"Applied orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
+
+                    # Вычисляем фичи на обновлённом стакане
+                    item = calculate_orderbook_features(data["timestamp"])
+                    if item is not None:
+                        with buffer_lock:
+                            orderbook_buffer.append(item)
                 else:
                     logger.warning(f"Out-of-sync orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
                     asyncio.create_task(fetch_orderbook_snapshot())  # Запускаем ресинхронизацию
                     continue
-
-                bids = np.array(data["b"], dtype=float)
-                asks = np.array(data["a"], dtype=float)
-
-                if len(bids) > 0 and len(asks) > 0:
-                    bids = bids[bids[:, 0].argsort()[::-1]]  # убывание (лучшая цена первой)
-                    asks = asks[asks[:, 0].argsort()]        # возрастание (лучшая цена первой)
-
-                    best_bid = bids[0, 0]
-                    best_ask = asks[0, 0]
-                    spread_5 = np.mean(asks[:5, 0] - bids[:5, 0]) if len(bids) >= 5 and len(asks) >= 5 else best_ask - best_bid
-                    bid_volume_10 = bids[:10, 1].sum() if len(bids) >= 10 else bids[:, 1].sum()
-                    ask_volume_10 = asks[:10, 1].sum() if len(asks) >= 10 else asks[:, 1].sum()
-                    total_volume_10 = bid_volume_10 + ask_volume_10
-                    imbalance_10 = (bid_volume_10 - ask_volume_10) / total_volume_10 if total_volume_10 > 0 else 0.0
-                    rel_bid_volume_10 = bid_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
-                    rel_ask_volume_10 = ask_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
-                    
-                    delta_bid_vol_10 = 0.0
-                    delta_ask_vol_10 = 0.0
-                    with buffer_lock:
-                        if orderbook_buffer:
-                            last_item = orderbook_buffer[-1]
-                            delta_bid_vol_10 = bid_volume_10 - last_item.get("bid_volume_10", bid_volume_10)
-                            delta_ask_vol_10 = ask_volume_10 - last_item.get("ask_volume_10", ask_volume_10)
-
-                    if spread_5 <= 0:
-                        logger.warning(f"Invalid spread_5: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}", extra={'source': 'binance_api'})
-                        continue
-
-                    item = {
-                        "timestamp": data["timestamp"],
-                        "spread_5": spread_5,
-                        "mid_price": (best_ask + best_bid) / 2,
-                        "imbalance_10": imbalance_10,
-                        "rel_bid_volume_10": rel_bid_volume_10,
-                        "rel_ask_volume_10": rel_ask_volume_10,
-                        "bid_volume_10": bid_volume_10,
-                        "ask_volume_10": ask_volume_10,
-                        "delta_bid_vol_10": delta_bid_vol_10,
-                        "delta_ask_vol_10": delta_ask_vol_10
-                    }
-                    logger.debug(f"Orderbook features: spread_5={spread_5:.5f}, imbalance_10={imbalance_10:.3f}, rel_bid_volume_10={rel_bid_volume_10:.3f}", extra={'source': 'binance_api'})
-                    if abs(item['rel_bid_volume_10'] - item['rel_ask_volume_10']) > 0.99:
-                        logger.warning(f"Orderbook outlier: rel_bid_volume_10={item['rel_bid_volume_10']}, rel_ask_volume_10={item['rel_ask_volume_10']}", extra={'source': 'binance_api'})
-
-                    with buffer_lock:
-                        orderbook_buffer.append(item)
-                else:
-                    logger.warning(f"Empty bids or asks: bids={len(bids)}, asks={len(asks)}", extra={'source': 'binance_api'})
             else:
                 logger.warning(f"Invalid message: name={name}, keys={list(data.keys())}", extra={'source': 'binance_api'})
         except Exception as e:
