@@ -15,7 +15,7 @@ model:
   fivesec_train_window_seconds: 7200
   min_fivesec_candles: 1
   min_samples_leaf: 1
-  min_samples_split: 1
+  min_samples_split: 11
   use_orderbook: true
 timezone: Europe/Moscow
 visual:

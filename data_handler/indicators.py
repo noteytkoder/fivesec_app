@@ -6,7 +6,6 @@ SMA, лагов и агрегации свечей.
 
 import pandas as pd
 import numpy as np
-import logging
 from .config import config, MSK_TZ, logger
 from .buffers import get_current_orderbook_df
 
@@ -52,8 +51,6 @@ def calculate_indicators(df):
             df = pd.concat([df, shifts], axis=1)
         df = df.dropna()
         logger.info(f"After indicators: shape={df.shape}, NaN={df.isna().sum().sum()}")
-        logger.debug(f"Indicators df head:\n{df.head(5)}")
-        logger.debug(f"Indicators df dtypes:\n{df.dtypes}")
         return df
     except Exception as e:
         logger.error(f"Error calculating indicators: {e}")
@@ -73,8 +70,6 @@ def process_data_for_model(df, interval="5s"):
             "close": "last", "volume": "sum"
         }).ffill().dropna()
         logger.info(f"After resample ({interval}): shape={df.shape}, NaN={df.isna().sum().sum()}")
-        logger.debug(f"Resampled df head:\n{df.head(5)}")
-        logger.debug(f"Resampled df dtypes:\n{df.dtypes}")
         return calculate_indicators(df)
     except Exception as e:
         logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True)
@@ -89,20 +84,15 @@ def process_orderbook_for_model(orderbook_df, interval="5s"):
             logger.warning("No order book data available")
             return None
         logger.info(f"orderbook_df raw: shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
-        logger.debug(f"orderbook_df raw head:\n{orderbook_df.head(5)}")
-        logger.debug(f"orderbook_df raw dtypes:\n{orderbook_df.dtypes}")
         
-        # Рассчитываем дельту mid_price
+        # Фильтрация аномалий
+        orderbook_df = orderbook_df[np.abs(orderbook_df["spread_5"] - orderbook_df["spread_5"].mean()) <= 3 * orderbook_df["spread_5"].std()]
         orderbook_df["mid_price_delta"] = orderbook_df["mid_price"].diff().fillna(0.0)
+        orderbook_df = orderbook_df[np.abs(orderbook_df["mid_price_delta"] - orderbook_df["mid_price_delta"].mean()) <= 3 * orderbook_df["mid_price_delta"].std()]
         
-        # Удаляем mid_price, так как он коллинеарен с close
         orderbook_df = orderbook_df.drop(columns=["mid_price", "bid_volume_10", "ask_volume_10"], errors="ignore")
-        
-        # Ресэмплинг
         orderbook_df = orderbook_df.resample(interval).mean().ffill().dropna()
         logger.info(f"Processed orderbook ({interval}): shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
-        logger.debug(f"Processed orderbook head:\n{orderbook_df.head(5)}")
-        logger.debug(f"Processed orderbook dtypes:\n{orderbook_df.dtypes}")
         return orderbook_df
     except Exception as e:
         logger.error(f"Error processing order book: {e}", exc_info=True)
@@ -130,11 +120,8 @@ def merge_features(kline_df, orderbook_df):
             logger.error("Merged DataFrame is empty")
             return None
         logger.info(f"Merged: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}")
-        logger.debug(f"Merged df head:\n{merged_df.head(5)}")
-        logger.debug(f"Merged df dtypes:\n{merged_df.dtypes}")
-        if 'imbalance_10' in merged_df.columns:
-            corr_imbalance = merged_df['imbalance_10'].corr(merged_df['close'])
-            logger.debug(f"Orderbook corr with close: imbalance_10={corr_imbalance:.2f}")
+        corr_matrix = merged_df.corr()
+        logger.info(f"Correlation with close:\n{corr_matrix['close'].sort_values(ascending=False)}")
         return merged_df.dropna()
     except Exception as e:
         logger.error(f"Error merging features: {e}", exc_info=True)

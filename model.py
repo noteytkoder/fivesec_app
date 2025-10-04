@@ -15,30 +15,24 @@ from data_handler.buffers import get_current_orderbook_df
 config = load_config()
 logger = setup_logger()
 
-# Хранилище моделей и скейлеров
 models = {
-    "kline_only": None,  # Модель без стакана
-    "kline_with_orderbook": None  # Модель с данными стакана
+    "kline_only": None,
+    "kline_with_orderbook": None
 }
 scalers = {
-    "kline_only": None,  # Скейлер для модели без стакана
-    "kline_with_orderbook": None  # Скейлер для модели с данными стакана
+    "kline_only": None,
+    "kline_with_orderbook": None
 }
 
 def train_fivesec_model(df, use_orderbook=False):
     """
     Обучение 5-секундной модели.
-    
-    Parameters:
-    - df: pandas.DataFrame с данными kline (индекс — DatetimeIndex, столбцы включают 'close', 'rsi', 'sma', etc.)
-    - use_orderbook: bool, использовать ли данные стакана
     """
     global models, scalers
     try:
         model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
         logger.debug(f"train_fivesec_model ({model_key}): Input dataframe shape: {df.shape}, columns: {df.columns.tolist()}")
         
-        # Ограничение окна данных
         window_seconds = config["model"]["fivesec_train_window_seconds"]
         df = df.tail(int(window_seconds / 5))
         logger.debug(f"train_fivesec_model ({model_key}): After window limit, shape: {df.shape}")
@@ -47,42 +41,28 @@ def train_fivesec_model(df, use_orderbook=False):
             logger.warning(f"Insufficient data for 5-sec training ({model_key}): {len(df)} candles, required: {config['model']['min_fivesec_candles']}")
             return
         
-        # Подготовка данных
         if use_orderbook:
             orderbook_df = get_current_orderbook_df()
             if orderbook_df is None or orderbook_df.empty:
                 logger.warning(f"No order book data available for training ({model_key})")
                 return
-            logger.info(f"orderbook_df before process: shape={orderbook_df.shape}, dtypes={orderbook_df.dtypes.to_dict()}, head=\n{orderbook_df.head(5)}")
             orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
             if orderbook_df is None or orderbook_df.empty:
                 logger.warning(f"Failed to process order book data for training ({model_key})")
                 return
-            logger.info(f"orderbook_df after process: shape={orderbook_df.shape}, dtypes={orderbook_df.dtypes.to_dict()}, head=\n{orderbook_df.head(5)}")
             df = merge_features(df, orderbook_df)
             if df is None or df.empty:
                 logger.warning(f"Failed to merge kline and order book data ({model_key})")
                 return
         
-        # Определение признаков
         features = [
             "close", "rsi", "sma", "volume", "log_volume",
             "close_lag_1", "close_lag_2", "close_lag_3",
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
             "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
-        # if use_orderbook:
-        #     features += [
-        #         "spread_5", "mid_price_delta", "imbalance_10",
-        #         # "rel_bid_volume_10", "rel_ask_volume_10",
-        #         # "delta_bid_vol_10", "delta_ask_vol_10"
-        #     ]
         if use_orderbook:
-            features += [
-                "imbalance_10",
-                # "rel_bid_volume_10", "rel_ask_volume_10",
-                # "delta_bid_vol_10", "delta_ask_vol_10"
-            ]
+            features += ["spread_5", "imbalance_10"]  # Оставляем только проверенные признаки
         
         target = df["close"].shift(-1)
         valid_idx = target.notna()
@@ -103,55 +83,45 @@ def train_fivesec_model(df, use_orderbook=False):
             logger.warning(f"Zero standard deviation in features ({model_key}): {X.std()}")
             return
         
-        # diagnostic block
         logger.info(f"{model_key} before train: X.shape={X.shape}, y.shape={y.shape}")
         logger.info(f"{model_key} cols: {X.columns.tolist()}")
         logger.info(f"{model_key} nan per col:\n{X.isna().sum()}")
         logger.info(f"{model_key} nunique per col:\n{X.nunique()}")
         logger.info(f"{model_key} std per col:\n{X.std()}")
         logger.info(f"{model_key} describe:\n{X.describe().T}")
-        logger.debug(f"{model_key} X head:\n{X.head(5)}")
-        logger.debug(f"{model_key} y head:\n{y.head(5)}")
         
-        # Нормализация данных
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
         logger.debug(f"train_fivesec_model ({model_key}): Data normalized, X_scaled shape: {X_scaled.shape}")
         
-        # wrap back to DataFrame to inspect
         Xs_df = pd.DataFrame(X_scaled, index=X.index, columns=X.columns)
         logger.info(f"{model_key} after scaling: shape={Xs_df.shape}")
         logger.info(f"{model_key} scaled mean (approx):\n{Xs_df.mean().round(6)}")
         logger.info(f"{model_key} scaled std (approx):\n{Xs_df.std().round(6)}")
         logger.info(f"{model_key} any NaN after scaling: {Xs_df.isna().any().any()}")
-        logger.debug(f"{model_key} X_scaled head:\n{Xs_df.head(5)}")
         
-        # Настройка параметров модели
         max_depth = config["model"]["fivesec_max_depth"]
         if max_depth in (0, None):
-            logger.info(f"fivesec_max_depth is 0 or null, setting to None for unlimited tree depth ({model_key})")
-            max_depth = None
+            logger.info(f"fivesec_max_depth is 0 or null, setting to 10 ({model_key})")
+            max_depth = 10
         elif not isinstance(max_depth, (int, type(None))) or (isinstance(max_depth, int) and max_depth < 1):
-            logger.warning(f"Invalid fivesec_max_depth: {max_depth}, using default value 15 ({model_key})")
-            max_depth = 15
+            logger.warning(f"Invalid fivesec_max_depth: {max_depth}, using default value 10 ({model_key})")
+            max_depth = 10
         
-        # Создание и обучение модели
         model = RandomForestRegressor(
             n_estimators=config["model"]["fivesec_n_estimators"],
             max_depth=max_depth,
-            min_samples_split=config["model"].get("min_samples_split", 2),
-            min_samples_leaf=config["model"].get("min_samples_leaf", 1),
+            min_samples_split=5,
+            min_samples_leaf=3,
             max_features=config["model"].get("max_features", "sqrt"),
             random_state=42
         )
         logger.info(f"Target y describe: mean={y.mean()}, std={y.std()}, min={y.min()}, max={y.max()}")
         model.fit(X_scaled, y)
         
-        # Оценка модели
         y_pred = model.predict(X_scaled)
         r2 = r2_score(y, y_pred)
         
-        # Сохранение модели и скейлера
         models[model_key] = model
         scalers[model_key] = scaler
         logger.info(f"{model_key} model trained, R^2={r2:.4f}, samples={len(X)}")
@@ -159,15 +129,6 @@ def train_fivesec_model(df, use_orderbook=False):
         logger.error(f"Error training {model_key} model: {e}", exc_info=True)
 
 def select_model(use_orderbook=False):
-    """
-    Выбор модели по флагу.
-    
-    Parameters:
-    - use_orderbook: bool, использовать ли модель с данными стакана
-    
-    Returns:
-    - Модель или None, если модель не инициализирована
-    """
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
     if models[model_key] is None:
         logger.warning(f"No {model_key} model available")
@@ -175,16 +136,6 @@ def select_model(use_orderbook=False):
     return models[model_key]
 
 def predict_fivesec(features, use_orderbook=False):
-    """
-    Прогноз для 5-секундной модели.
-    
-    Parameters:
-    - features: pandas.DataFrame с признаками
-    - use_orderbook: bool, использовать ли модель с данными стакана
-    
-    Returns:
-    - float: предсказанная цена или None в случае ошибки
-    """
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
     try:
         model = select_model(use_orderbook)
@@ -199,18 +150,8 @@ def predict_fivesec(features, use_orderbook=False):
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
             "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
-        # if use_orderbook:
-        #     expected_features += [
-        #         "spread_5", "mid_price_delta", "imbalance_10",
-        #         # "rel_bid_volume_10", "rel_ask_volume_10",
-        #         # "delta_bid_vol_10", "delta_ask_vol_10"
-        #     ]       
         if use_orderbook:
-            expected_features  += [
-                "imbalance_10",
-                # "rel_bid_volume_10", "rel_ask_volume_10",
-                # "delta_bid_vol_10", "delta_ask_vol_10"
-            ]
+            expected_features += ["spread_5", "imbalance_10"]
         
         if not all(col in features.columns for col in expected_features):
             logger.error(f"Missing features in prediction input ({model_key}): {features.columns.tolist()}")
@@ -219,7 +160,7 @@ def predict_fivesec(features, use_orderbook=False):
             logger.error(f"NaN or Inf values in prediction features ({model_key})")
             return None
         
-        features = features[expected_features]  # Ensure correct feature order
+        features = features[expected_features]
         features_scaled = scaler.transform(features)
         return model.predict(features_scaled)[0]
     except Exception as e:
