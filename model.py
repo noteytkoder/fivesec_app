@@ -59,9 +59,13 @@ def train_fivesec_model(df, use_orderbook=False):
             "close", "rsi", "sma", "volume", "log_volume",
             "close_lag_1", "close_lag_2", "close_lag_3",
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-            "sma_lag_1", "sma_lag_2", "sma_lag_3",
-            "imbalance_10", "rel_bid_volume_10", "delta_bid_vol_10"  # Исключены rel_ask_volume_10, delta_ask_vol_10
+            "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
+        if use_orderbook:
+            features += [
+                "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
+                "delta_bid_vol_10", "delta_ask_vol_10"
+            ]  # Включены все признаки стакана
         
         target = df["close"].shift(-1)
         valid_idx = target.notna()
@@ -147,9 +151,13 @@ def predict_fivesec(features, use_orderbook=False):
             "close", "rsi", "sma", "volume", "log_volume",
             "close_lag_1", "close_lag_2", "close_lag_3",
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-            "sma_lag_1", "sma_lag_2", "sma_lag_3",
-            "imbalance_10", "rel_bid_volume_10", "delta_bid_vol_10"
+            "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
+        if use_orderbook:
+            expected_features += [
+                "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
+                "delta_bid_vol_10", "delta_ask_vol_10"
+            ]  # Включены все признаки стакана
         
         if not all(col in features.columns for col in expected_features):
             logger.error(f"Missing features in prediction input ({model_key}): {features.columns.tolist()}")
