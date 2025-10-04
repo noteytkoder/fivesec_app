@@ -16,6 +16,9 @@ from .indicators import process_timestamp, process_data_for_model
 from model import train_fivesec_model
 import time  
 
+last_orderbook_update_id = None
+last_orderbook_update_id = None  # Глобальная переменная для lastUpdateId снапшота
+
 async def fetch_fivesec_historical_data():
     """
     Загружает час исторических данных BTCUSDT@1s через REST API Binance.
@@ -81,6 +84,7 @@ async def fetch_orderbook_snapshot():
     Загружает моментальный снимок стакана (order book) через REST API Binance.
     Предвычисляет фичи и добавляет в буфер.
     """
+    global last_update_id
     try:
         url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=100"
         response = requests.get(url, timeout=15)
@@ -89,30 +93,25 @@ async def fetch_orderbook_snapshot():
         data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ).isoformat()
         logger.info("Order book snapshot fetched")
 
+        # Сохраняем lastUpdateId
+        last_update_id = data.get("lastUpdateId")
+        logger.debug(f"Updated last_update_id: {last_update_id}")
+
         if "bids" in data and "asks" in data:
             bids = np.array(data["bids"], dtype=float)
             asks = np.array(data["asks"], dtype=float)
 
             if len(bids) > 0 and len(asks) > 0:
-                # Binance гарантирует сортировку snapshot-а:
-                # bids в порядке убывания, asks в порядке возрастания.
                 best_bid = bids[0, 0]
                 best_ask = asks[0, 0]
-                
-                # Средний спред по топ-5 уровням
                 spread_5 = np.mean(asks[:5, 0] - bids[:5, 0]) if len(bids) >= 5 and len(asks) >= 5 else best_ask - best_bid
-                
-                # Дисбаланс по топ-10 уровням
                 bid_volume_10 = bids[:10, 1].sum() if len(bids) >= 10 else bids[:, 1].sum()
                 ask_volume_10 = asks[:10, 1].sum() if len(asks) >= 10 else asks[:, 1].sum()
                 total_volume_10 = bid_volume_10 + ask_volume_10
                 imbalance_10 = (bid_volume_10 - ask_volume_10) / total_volume_10 if total_volume_10 > 0 else 0.0
-                
-                # Нормализованные объёмы
                 rel_bid_volume_10 = bid_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
                 rel_ask_volume_10 = ask_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
                 
-                # Для дельт объёмов сравниваем с последним снимком (если есть)
                 delta_bid_vol_10 = 0.0
                 delta_ask_vol_10 = 0.0
                 with buffer_lock:
@@ -121,15 +120,14 @@ async def fetch_orderbook_snapshot():
                         delta_bid_vol_10 = bid_volume_10 - last_item.get("bid_volume_10", bid_volume_10)
                         delta_ask_vol_10 = ask_volume_10 - last_item.get("ask_volume_10", ask_volume_10)
 
-                # Проверка на валидность спреда
                 if spread_5 <= 0:
-                    logger.warning(f"Invalid snapshot spread_5: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
-                    return None
+                    logger.warning(f"Invalid spread_5: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
+                    return
 
                 item = {
                     "timestamp": data["timestamp"],
                     "spread_5": spread_5,
-                    "mid_price": (best_ask + best_bid) / 2,  # Сохраняем для расчёта дельты в дальнейшем
+                    "mid_price": (best_ask + best_bid) / 2,
                     "imbalance_10": imbalance_10,
                     "rel_bid_volume_10": rel_bid_volume_10,
                     "rel_ask_volume_10": rel_ask_volume_10,
@@ -138,19 +136,27 @@ async def fetch_orderbook_snapshot():
                     "delta_bid_vol_10": delta_bid_vol_10,
                     "delta_ask_vol_10": delta_ask_vol_10
                 }
-
+                logger.debug(f"Orderbook snapshot: spread_5={spread_5:.5f}, imbalance_10={imbalance_10:.3f}, rel_bid_volume_10={rel_bid_volume_10:.3f}")
+                if abs(rel_bid_volume_10 - rel_ask_volume_10) > 0.99:
+                    logger.warning(f"Orderbook snapshot outlier: rel_bid_volume_10={rel_bid_volume_10}, rel_ask_volume_10={rel_ask_volume_10}")
+                
                 with buffer_lock:
                     orderbook_buffer.append(item)
-                logger.info(f"Order book snapshot added to buffer, size: {len(orderbook_buffer)}")
-            else:
-                logger.warning("Empty bids or asks in orderbook snapshot")
-        else:
-            logger.warning(f"Invalid orderbook snapshot: keys={list(data.keys())}")
-
-        return data
     except Exception as e:
-        logger.error(f"Error fetching order book snapshot: {e}", exc_info=True)
-        return None
+        logger.error(f"Error fetching orderbook snapshot: {e}", exc_info=True)
+
+
+async def orderbook_snapshot_loop(interval: int = 5):
+    """
+    Периодически подтягивает полный снапшот стакана через REST
+    и кладет в общий буфер, чтобы устранить дрейф дельт.
+    """
+    while True:
+        try:
+            await fetch_orderbook_snapshot()
+        except Exception as e:
+            logger.error(f"Error in orderbook_snapshot_loop: {e}", exc_info=True)
+        await asyncio.sleep(interval)
 
 async def producer_ws(uri, name, queue):
     """
@@ -189,12 +195,14 @@ async def consumer_loop(raw_queue):
     """
     Обрабатывает сообщения из очереди WebSocket, добавляет данные в буферы.
     """
+    global last_update_id
     message_count, last_fivesec_timestamp = 0, None
     while True:
         try:
             name, raw = await raw_queue.get()
             data = json.loads(raw)
             logger.debug(f"Consumer received: name={name}, data_keys={list(data.keys())}", extra={'source': 'binance_api'})
+            
             if name == "fivesec_kline" and "k" in data:
                 k = data["k"]
                 timestamp = process_timestamp(k["t"])
@@ -211,32 +219,44 @@ async def consumer_loop(raw_queue):
                 message_count += 1
                 if message_count % 100 == 0:
                     logger.info(f"Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}", extra={'source': 'binance_api'})
+            
             elif name == "orderbook_diff" and data.get("e") == "depthUpdate" and "b" in data and "a" in data:
+                # Проверка update IDs
+                U = data.get("U")
+                u = data.get("u")
+                if last_update_id is None:
+                    logger.warning(f"Diff received before snapshot: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
+                    asyncio.create_task(fetch_orderbook_snapshot())  # Запускаем снапшот
+                    continue
+                if u < last_update_id:
+                    logger.debug(f"Ignoring outdated orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
+                    continue
+                if U <= last_update_id + 1 <= u:
+                    # Дельта валидна, применяем
+                    last_update_id = u
+                    logger.debug(f"Applying orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
+                else:
+                    logger.warning(f"Out-of-sync orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}", extra={'source': 'binance_api'})
+                    asyncio.create_task(fetch_orderbook_snapshot())  # Запускаем ресинхронизацию
+                    continue
+
                 bids = np.array(data["b"], dtype=float)
                 asks = np.array(data["a"], dtype=float)
 
                 if len(bids) > 0 and len(asks) > 0:
-                    # Сортировка по цене
                     bids = bids[bids[:, 0].argsort()[::-1]]  # убывание (лучшая цена первой)
                     asks = asks[asks[:, 0].argsort()]        # возрастание (лучшая цена первой)
 
                     best_bid = bids[0, 0]
                     best_ask = asks[0, 0]
-                    
-                    # Средний спред по топ-5 уровням
                     spread_5 = np.mean(asks[:5, 0] - bids[:5, 0]) if len(bids) >= 5 and len(asks) >= 5 else best_ask - best_bid
-                    
-                    # Дисбаланс по топ-10 уровням
                     bid_volume_10 = bids[:10, 1].sum() if len(bids) >= 10 else bids[:, 1].sum()
                     ask_volume_10 = asks[:10, 1].sum() if len(asks) >= 10 else asks[:, 1].sum()
                     total_volume_10 = bid_volume_10 + ask_volume_10
                     imbalance_10 = (bid_volume_10 - ask_volume_10) / total_volume_10 if total_volume_10 > 0 else 0.0
-                    
-                    # Нормализованные объёмы
                     rel_bid_volume_10 = bid_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
                     rel_ask_volume_10 = ask_volume_10 / total_volume_10 if total_volume_10 > 0 else 0.5
                     
-                    # Дельты объёмов
                     delta_bid_vol_10 = 0.0
                     delta_ask_vol_10 = 0.0
                     with buffer_lock:
@@ -245,15 +265,14 @@ async def consumer_loop(raw_queue):
                             delta_bid_vol_10 = bid_volume_10 - last_item.get("bid_volume_10", bid_volume_10)
                             delta_ask_vol_10 = ask_volume_10 - last_item.get("ask_volume_10", ask_volume_10)
 
-                    # Проверка на валидность спреда
                     if spread_5 <= 0:
-                        logger.warning(f"Invalid spread_5: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
+                        logger.warning(f"Invalid spread_5: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}", extra={'source': 'binance_api'})
                         continue
 
                     item = {
                         "timestamp": data["timestamp"],
                         "spread_5": spread_5,
-                        "mid_price": (best_ask + best_bid) / 2,  # Для расчёта дельты
+                        "mid_price": (best_ask + best_bid) / 2,
                         "imbalance_10": imbalance_10,
                         "rel_bid_volume_10": rel_bid_volume_10,
                         "rel_ask_volume_10": rel_ask_volume_10,
@@ -262,8 +281,8 @@ async def consumer_loop(raw_queue):
                         "delta_bid_vol_10": delta_bid_vol_10,
                         "delta_ask_vol_10": delta_ask_vol_10
                     }
-                    logger.debug(f"Orderbook features: spread_5={spread_5:.5f}, imbalance_10={item['imbalance_10']:.3f}, rel_bid_volume_10={item['rel_bid_volume_10']:.3f}", extra={'source': 'binance_api'})
-                    if abs(item['rel_bid_volume_10'] - item['rel_ask_volume_10']) > 0.99:  # Проверка на выбросы
+                    logger.debug(f"Orderbook features: spread_5={spread_5:.5f}, imbalance_10={imbalance_10:.3f}, rel_bid_volume_10={rel_bid_volume_10:.3f}", extra={'source': 'binance_api'})
+                    if abs(item['rel_bid_volume_10'] - item['rel_ask_volume_10']) > 0.99:
                         logger.warning(f"Orderbook outlier: rel_bid_volume_10={item['rel_bid_volume_10']}, rel_ask_volume_10={item['rel_ask_volume_10']}", extra={'source': 'binance_api'})
 
                     with buffer_lock:

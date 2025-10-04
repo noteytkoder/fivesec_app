@@ -40,9 +40,6 @@ def stop_system():
     asyncio.run_coroutine_threadsafe(_stop_system_async(), MAIN_LOOP)
 
 async def _spawn_all_tasks(root_dir):
-    """
-    Создает все фоновые задачи и возвращает список asyncio.Task.
-    """
     global RUNNING_TASKS, ACTIVE_QUEUE, ORDERBOOK_QUEUE
     ACTIVE_QUEUE = asyncio.Queue(maxsize=10000)
     ORDERBOOK_QUEUE = asyncio.Queue(maxsize=10000)
@@ -53,10 +50,11 @@ async def _spawn_all_tasks(root_dir):
         asyncio.create_task(producer_ws(fivesec_kline_uri, "fivesec_kline", ACTIVE_QUEUE)),
         asyncio.create_task(producer_orderbook_ws(orderbook_uri, "orderbook_diff", ORDERBOOK_QUEUE)),
         asyncio.create_task(consumer_loop(ACTIVE_QUEUE)),
-        asyncio.create_task(consumer_loop(ORDERBOOK_QUEUE)),  # Повторно используем consumer_loop для стакана
+        asyncio.create_task(consumer_loop(ORDERBOOK_QUEUE)),
         asyncio.create_task(fivesec_prediction_loop(root_dir)),
         asyncio.create_task(fivesec_retrain_loop()),
         asyncio.create_task(update_fivesec_errors_loop(root_dir)),
+        asyncio.create_task(orderbook_snapshot_loop(interval=5)),  # Новый таск
     ]
     async with RUNNING_TASKS_LOCK:
         RUNNING_TASKS = tasks
@@ -71,11 +69,14 @@ async def start_binance_websocket(root_dir):
     INTENTIONAL_STOP = False
     SYSTEM_STATE = "RUNNING"
 
-    # просто создаём таски
+    # Выполняем начальный снапшот для инициализации last_update_id
+    from .binance_api import fetch_orderbook_snapshot
+    await fetch_orderbook_snapshot()
+
+    # Создаём таски
     await _spawn_all_tasks(root_dir)
 
     logger.info("All websocket tasks started (not awaiting gather)")
-    # ничего не await'им, корутина сразу вернёт управление
 
 async def _stop_system_async():
     """
