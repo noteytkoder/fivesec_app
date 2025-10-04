@@ -59,10 +59,9 @@ def train_fivesec_model(df, use_orderbook=False):
             "close", "rsi", "sma", "volume", "log_volume",
             "close_lag_1", "close_lag_2", "close_lag_3",
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-            "sma_lag_1", "sma_lag_2", "sma_lag_3"
+            "sma_lag_1", "sma_lag_2", "sma_lag_3",
+            "imbalance_10", "rel_bid_volume_10", "delta_bid_vol_10"  # Исключены rel_ask_volume_10, delta_ask_vol_10
         ]
-        if use_orderbook:
-            features += ["spread_5", "imbalance_10"]  # Оставляем только проверенные признаки
         
         target = df["close"].shift(-1)
         valid_idx = target.notna()
@@ -102,17 +101,17 @@ def train_fivesec_model(df, use_orderbook=False):
         
         max_depth = config["model"]["fivesec_max_depth"]
         if max_depth in (0, None):
-            logger.info(f"fivesec_max_depth is 0 or null, setting to 10 ({model_key})")
-            max_depth = 10
+            logger.info(f"fivesec_max_depth is 0 or null, setting to 8 ({model_key})")
+            max_depth = 8
         elif not isinstance(max_depth, (int, type(None))) or (isinstance(max_depth, int) and max_depth < 1):
-            logger.warning(f"Invalid fivesec_max_depth: {max_depth}, using default value 10 ({model_key})")
-            max_depth = 10
+            logger.warning(f"Invalid fivesec_max_depth: {max_depth}, using default value 8 ({model_key})")
+            max_depth = 8
         
         model = RandomForestRegressor(
             n_estimators=config["model"]["fivesec_n_estimators"],
             max_depth=max_depth,
-            min_samples_split=5,
-            min_samples_leaf=3,
+            min_samples_split=10,
+            min_samples_leaf=5,
             max_features=config["model"].get("max_features", "sqrt"),
             random_state=42
         )
@@ -148,10 +147,9 @@ def predict_fivesec(features, use_orderbook=False):
             "close", "rsi", "sma", "volume", "log_volume",
             "close_lag_1", "close_lag_2", "close_lag_3",
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-            "sma_lag_1", "sma_lag_2", "sma_lag_3"
+            "sma_lag_1", "sma_lag_2", "sma_lag_3",
+            "imbalance_10", "rel_bid_volume_10", "delta_bid_vol_10"
         ]
-        if use_orderbook:
-            expected_features += ["spread_5", "imbalance_10"]
         
         if not all(col in features.columns for col in expected_features):
             logger.error(f"Missing features in prediction input ({model_key}): {features.columns.tolist()}")

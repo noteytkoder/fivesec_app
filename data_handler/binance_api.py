@@ -13,12 +13,13 @@ from .config import config, INTERVAL_SECONDS, logger, MSK_TZ
 from .buffers import buffer_lock, fivesec_buffer, orderbook_buffer
 from .indicators import process_timestamp, process_data_for_model
 from model import train_fivesec_model
-import time  
+import time
 from sortedcontainers import SortedDict
 
 last_update_id = None
 local_bids = SortedDict(reverse=True)  # Цены bids убывание, значение — volume
 local_asks = SortedDict()  # Цены asks возрастание, значение — volume
+sync_issues_count = 0  # Счётчик рассинхронизаций
 
 async def fetch_fivesec_historical_data():
     """
@@ -67,6 +68,7 @@ async def fetch_fivesec_historical_data():
             logger.error("Invalid data detected in historical data")
             return
 
+        logger.info(f"Raw kline data: unique close values={df['close'].nunique()}")
         with buffer_lock:
             fivesec_buffer.clear()
             fivesec_buffer.extend(df.reset_index().to_dict("records"))
@@ -75,8 +77,9 @@ async def fetch_fivesec_historical_data():
         if len(fivesec_buffer) >= config["data"]["min_records"]:
             df = process_data_for_model(df, interval="5s")
             if df is not None:
-                train_fivesec_model(df)
-                logger.info("Initial 5-second model trained")
+                train_fivesec_model(df, use_orderbook=False)  # Обучение kline_only
+                train_fivesec_model(df, use_orderbook=True)  # Обучение kline_with_orderbook
+                logger.info("Initial 5-second models trained")
     except Exception as e:
         logger.error(f"Error fetching 5-second historical data: {e}", exc_info=True)
 
@@ -89,16 +92,23 @@ async def fetch_orderbook_snapshot():
         data = response.json()
         data["timestamp"] = pd.Timestamp.now(tz=MSK_TZ).isoformat()
         logger.info("Order book snapshot fetched")
+        logger.debug(f"Snapshot data: bids={data['bids'][:5]}, asks={data['asks'][:5]}")
 
         last_update_id = data.get("lastUpdateId")
         logger.debug(f"Updated last_update_id: {last_update_id}")
 
         local_bids.clear()
         local_asks.clear()
+        if not data["bids"] or not data["asks"]:
+            logger.warning("Empty bids or asks in snapshot")
+            return
+
+        best_bid = float(data["bids"][0][0])  # Преобразуем в float
+        best_ask = float(data["asks"][0][0])  # Преобразуем в float
         for price, volume in data["bids"]:
             price = float(price)
             volume = float(volume)
-            if price > 1e6 or price < 0:  # Фильтрация аномальных цен
+            if price > 1e6 or price < 0 or abs(price - best_bid) > 300:  # Уменьшен порог
                 logger.warning(f"Anomalous bid price: {price}")
                 continue
             if volume > 0:
@@ -106,11 +116,15 @@ async def fetch_orderbook_snapshot():
         for price, volume in data["asks"]:
             price = float(price)
             volume = float(volume)
-            if price > 1e6 or price < 0:
+            if price > 1e6 or price < 0 or abs(price - best_ask) > 300:
                 logger.warning(f"Anomalous ask price: {price}")
                 continue
             if volume > 0:
                 local_asks[price] = volume
+
+        if not local_bids or not local_asks:
+            logger.warning("No valid bids or asks after filtering")
+            return
 
         item = calculate_orderbook_features(data["timestamp"])
         if item is not None:
@@ -127,6 +141,9 @@ def calculate_orderbook_features(timestamp):
     best_bid = local_bids.peekitem(0)[0]  # Highest bid
     best_ask = local_asks.peekitem(0)[0]  # Lowest ask
     spread_5 = best_ask - best_bid  # Используем только лучший спред
+    if spread_5 > 300 or spread_5 < 0:  # Уменьшен порог
+        logger.warning(f"Anomalous spread_5: {spread_5}, best_bid={best_bid}, best_ask={best_ask}")
+        return None
     logger.debug(f"best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
 
     mid_price = (best_bid + best_ask) / 2
@@ -151,7 +168,7 @@ def calculate_orderbook_features(timestamp):
         "delta_ask_vol_10": delta_ask_vol_10
     }
 
-async def orderbook_snapshot_loop(interval=2):  # Уменьшен интервал
+async def orderbook_snapshot_loop(interval=1):
     while True:
         try:
             await fetch_orderbook_snapshot()
@@ -187,7 +204,7 @@ async def producer_orderbook_ws(uri, name, queue):
             await asyncio.sleep(5)
 
 async def consumer_loop(raw_queue):
-    global last_update_id
+    global last_update_id, sync_issues_count
     message_count, last_fivesec_timestamp = 0, None
     while True:
         try:
@@ -210,7 +227,7 @@ async def consumer_loop(raw_queue):
                     fivesec_buffer.append(item)
                 message_count += 1
                 if message_count % 100 == 0:
-                    logger.info(f"Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}", extra={'source': 'binance_api'})
+                    logger.info(f"Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}, unique close={pd.DataFrame(fivesec_buffer)['close'].nunique()}", extra={'source': 'binance_api'})
             
             elif name == "orderbook_diff" and data.get("e") == "depthUpdate" and "b" in data and "a" in data:
                 U = data.get("U")
@@ -223,10 +240,17 @@ async def consumer_loop(raw_queue):
                     logger.debug(f"Ignoring outdated orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}")
                     continue
                 if U <= last_update_id + 1 <= u:
+                    if not local_bids or not local_asks:
+                        logger.warning("Empty local_bids or local_asks, fetching snapshot")
+                        asyncio.create_task(fetch_orderbook_snapshot())
+                        continue
+                    best_bid = local_bids.peekitem(0)[0] if local_bids else float(data["b"][0][0])
+                    best_ask = local_asks.peekitem(0)[0] if local_asks else float(data["a"][0][0])
+                    logger.debug(f"Applying orderbook_diff: best_bid={best_bid}, best_ask={best_ask}")
                     for price, volume in data["b"]:
                         price = float(price)
                         volume = float(volume)
-                        if price > 1e6 or price < 0:
+                        if price > 1e6 or price < 0 or abs(price - best_bid) > 300:
                             logger.warning(f"Anomalous bid price in diff: {price}")
                             continue
                         if volume == 0:
@@ -236,7 +260,7 @@ async def consumer_loop(raw_queue):
                     for price, volume in data["a"]:
                         price = float(price)
                         volume = float(volume)
-                        if price > 1e6 or price < 0:
+                        if price > 1e6 or price < 0 or abs(price - best_ask) > 300:
                             logger.warning(f"Anomalous ask price in diff: {price}")
                             continue
                         if volume == 0:
@@ -253,6 +277,8 @@ async def consumer_loop(raw_queue):
                             orderbook_buffer.append(item)
                 else:
                     logger.warning(f"Out-of-sync orderbook_diff: U={U}, u={u}, last_update_id={last_update_id}")
+                    sync_issues_count += 1
+                    logger.info(f"Sync issues count: {sync_issues_count}", extra={'source': 'binance_api'})
                     asyncio.create_task(fetch_orderbook_snapshot())
                     continue
             else:
