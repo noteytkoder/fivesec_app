@@ -132,11 +132,11 @@ def calculate_orderbook_features(timestamp):
     # Top 5 spread avg
     bid_prices = list(local_bids.keys())[:5]
     ask_prices = list(local_asks.keys())[:5]
-    spread_5 = np.mean([ask_prices[i] - bid_prices[i] for i in range(min(5, len(bid_prices), len(ask_prices)))]) if bid_prices and ask_prices else best_ask - best_bid
+    # spread_5 = np.mean([ask_prices[i] - bid_prices[i] for i in range(min(5, len(bid_prices), len(ask_prices)))]) if bid_prices and ask_prices else best_ask - best_bid
+    spread_5 = np.mean(ask_prices) - np.mean(bid_prices)
 
     if spread_5 <= 0:
         logger.warning(f"Invalid spread_5 in local orderbook: best_bid={best_bid}, best_ask={best_ask}, spread_5={spread_5}")
-        return None
 
     # Top 10 volumes
     bid_volume_10 = sum(local_bids[price] for price in list(local_bids.keys())[:10])
@@ -174,7 +174,7 @@ def calculate_orderbook_features(timestamp):
 
     return item
 
-async def orderbook_snapshot_loop(interval: int = 5):
+async def orderbook_snapshot_loop(interval: int = 2):
     """
     Периодически подтягивает полный снапшот стакана через REST
     и кладет в общий буфер, чтобы устранить дрейф дельт.

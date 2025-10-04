@@ -71,11 +71,17 @@ def train_fivesec_model(df, use_orderbook=False):
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
             "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
+        # if use_orderbook:
+        #     features += [
+        #         "spread_5", "mid_price_delta", "imbalance_10",
+        #         # "rel_bid_volume_10", "rel_ask_volume_10",
+        #         # "delta_bid_vol_10", "delta_ask_vol_10"
+        #     ]
         if use_orderbook:
             features += [
-                "spread_5", "mid_price_delta", "imbalance_10",
-                "rel_bid_volume_10", "rel_ask_volume_10",
-                "delta_bid_vol_10", "delta_ask_vol_10"
+                "imbalance_10",
+                # "rel_bid_volume_10", "rel_ask_volume_10",
+                # "delta_bid_vol_10", "delta_ask_vol_10"
             ]
         
         target = df["close"].shift(-1)
@@ -193,11 +199,17 @@ def predict_fivesec(features, use_orderbook=False):
             "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
             "sma_lag_1", "sma_lag_2", "sma_lag_3"
         ]
+        # if use_orderbook:
+        #     expected_features += [
+        #         "spread_5", "mid_price_delta", "imbalance_10",
+        #         # "rel_bid_volume_10", "rel_ask_volume_10",
+        #         # "delta_bid_vol_10", "delta_ask_vol_10"
+        #     ]       
         if use_orderbook:
-            expected_features += [
-                "spread_5", "mid_price_delta", "imbalance_10",
-                "rel_bid_volume_10", "rel_ask_volume_10",
-                "delta_bid_vol_10", "delta_ask_vol_10"
+            expected_features  += [
+                "imbalance_10",
+                # "rel_bid_volume_10", "rel_ask_volume_10",
+                # "delta_bid_vol_10", "delta_ask_vol_10"
             ]
         
         if not all(col in features.columns for col in expected_features):
