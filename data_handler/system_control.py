@@ -1,3 +1,4 @@
+# data_handler/system_control.py
 """
 Модуль управления системой.
 Запускает и останавливает фоновые задачи (REST, WebSocket, предсказания, переобучение, обновление ошибок).
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from .config import logger
 
-from .binance_api import producer_ws, consumer_loop, producer_orderbook_ws, orderbook_snapshot_loop
+from .binance_api import producer_ws, consumer_loop, fetch_orderbook_snapshot, orderbook
 from .prediction_loop import fivesec_prediction_loop
 from .retrain_loop import fivesec_retrain_loop
 from .errors_loop import update_fivesec_errors_loop
@@ -20,7 +21,7 @@ INTENTIONAL_STOP = False
 RUNNING_TASKS = []
 RUNNING_TASKS_LOCK = asyncio.Lock()
 ACTIVE_QUEUE = None
-ORDERBOOK_QUEUE = None  # Новая очередь для стакана
+ORDERBOOK_QUEUE = None
 
 def set_main_loop(loop):
     global MAIN_LOOP
@@ -36,7 +37,6 @@ def stop_system():
     if MAIN_LOOP is None:
         raise RuntimeError("Main loop not set")
 
-    # ставим отмену всех фоновых задач в очередь event loop
     asyncio.run_coroutine_threadsafe(_stop_system_async(), MAIN_LOOP)
 
 async def _spawn_all_tasks(root_dir):
@@ -48,13 +48,12 @@ async def _spawn_all_tasks(root_dir):
 
     tasks = [
         asyncio.create_task(producer_ws(fivesec_kline_uri, "fivesec_kline", ACTIVE_QUEUE)),
-        asyncio.create_task(producer_orderbook_ws(orderbook_uri, "orderbook_diff", ORDERBOOK_QUEUE)),
+        asyncio.create_task(producer_ws(orderbook_uri, "orderbook_diff", ORDERBOOK_QUEUE)),
         asyncio.create_task(consumer_loop(ACTIVE_QUEUE)),
         asyncio.create_task(consumer_loop(ORDERBOOK_QUEUE)),
         asyncio.create_task(fivesec_prediction_loop(root_dir)),
         asyncio.create_task(fivesec_retrain_loop()),
         asyncio.create_task(update_fivesec_errors_loop(root_dir)),
-        asyncio.create_task(orderbook_snapshot_loop(interval=5)),  # Новый таск
     ]
     async with RUNNING_TASKS_LOCK:
         RUNNING_TASKS = tasks
@@ -69,11 +68,8 @@ async def start_binance_websocket(root_dir):
     INTENTIONAL_STOP = False
     SYSTEM_STATE = "RUNNING"
 
-    # Выполняем начальный снапшот для инициализации last_update_id
-    from .binance_api import fetch_orderbook_snapshot
     await fetch_orderbook_snapshot()
 
-    # Создаём таски
     await _spawn_all_tasks(root_dir)
 
     logger.info("All websocket tasks started (not awaiting gather)")
@@ -105,7 +101,6 @@ async def _stop_system_async():
         RUNNING_TASKS.clear()
 
     logger.warning("All tasks cancelled. System is STOPPED.")
-    # loop остаётся крутиться, чтобы можно было возобновить
 
 async def _resume_system_async(root_dir):
     """
@@ -123,12 +118,3 @@ def resume_system(root_dir):
     if MAIN_LOOP is None:
         raise RuntimeError("Main loop not set")
     asyncio.run_coroutine_threadsafe(_resume_system_async(root_dir), MAIN_LOOP)
-
-async def _resume_system_async(root_dir):
-    global INTENTIONAL_STOP, SYSTEM_STATE
-    if SYSTEM_STATE == "RUNNING":
-        logger.info("System already RUNNING")
-        return
-    INTENTIONAL_STOP = False
-    SYSTEM_STATE = "RUNNING"
-    await start_binance_websocket(root_dir)

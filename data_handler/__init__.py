@@ -1,9 +1,9 @@
+# data_handler/__init__.py
 """
 Пакет data_handler.
 Собирает все функции и переменные, чтобы внешние модули могли импортировать как раньше:
 from data_handler import fetch_fivesec_historical_data, fivesec_prediction_loop, start_binance_websocket ...
 """
-
 
 from .config import ROOT_DIR, LOGS_DIR, logger, MSK_TZ, INTERVAL_SECONDS, config
 from .buffers import (

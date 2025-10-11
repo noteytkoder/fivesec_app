@@ -1,3 +1,4 @@
+# data_handler/prediction_loop.py
 """
 Модуль цикла предсказаний.
 Формирует прогнозы на 5 секунд, пишет их в CSV и в лог.
@@ -58,9 +59,7 @@ async def fivesec_prediction_loop(root_dir):
             logger.debug(f"Processed kline: shape={df.shape}, columns={df.columns.tolist()}", extra={'source': 'prediction_loop'})
 
             if use_orderbook:
-                if orderbook_buffer:
-                    logger.debug(f"Last orderbook item: {orderbook_buffer[-1]}", extra={'source': 'prediction_loop'})
-                else:
+                if not orderbook_buffer:
                     logger.warning("Orderbook buffer empty", extra={'source': 'prediction_loop'})
                     await asyncio.sleep(wait_seconds)
                     continue
@@ -70,8 +69,6 @@ async def fivesec_prediction_loop(root_dir):
                     orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
                     if orderbook_df is not None and not orderbook_df.empty:
                         logger.debug(f"Processed orderbook: shape={orderbook_df.shape}, columns={orderbook_df.columns.tolist()}", extra={'source': 'prediction_loop'})
-                        ratio_outliers = (orderbook_df['rel_bid_volume_10'].abs() > 0.99).sum()
-                        logger.info(f"Orderbook stats: imbalance_10_mean={orderbook_df['imbalance_10'].mean():.2f}, ratio_outliers={ratio_outliers}", extra={'source': 'prediction_loop'})
                     else:
                         logger.warning("Failed to process orderbook data", extra={'source': 'prediction_loop'})
                         await asyncio.sleep(wait_seconds)
@@ -87,10 +84,6 @@ async def fivesec_prediction_loop(root_dir):
                     await asyncio.sleep(wait_seconds)
                     continue
                 logger.info(f"Features for pred: shape={features_df.shape}, NaN={features_df.isna().sum().sum()}", extra={'source': 'prediction_loop'})
-                if use_orderbook:
-                    corr_imbalance = features_df['imbalance_10'].corr(features_df['close'])
-                    logger.debug(f"Orderbook corr with close: imbalance_10={corr_imbalance:.2f}", extra={'source': 'prediction_loop'})
-                latest_row = features_df.iloc[-1]
                 feature_columns = [
                     "close", "rsi", "sma", "volume", "log_volume",
                     "close_lag_1", "close_lag_2", "close_lag_3",
@@ -116,7 +109,7 @@ async def fivesec_prediction_loop(root_dir):
                 await asyncio.sleep(wait_seconds)
                 continue
 
-            current_close = latest_row["close"]
+            current_close = features_df.iloc[-1]["close"]
             fivesec_prediction = predict_fivesec(features_df, use_orderbook=use_orderbook)
             if fivesec_prediction is None:
                 await asyncio.sleep(wait_seconds)

@@ -1,3 +1,4 @@
+# data_handler/retrain_loop.py
 """
 Модуль цикла переобучения модели.
 С периодичностью retrain_interval переобучает 5-секундную модель на новых данных.
@@ -6,7 +7,7 @@
 import time
 import numpy as np
 import asyncio
-from config_manager import load_config  # Импортируем load_config
+from config_manager import load_config
 from .buffers import get_current_buffer_df
 from .indicators import process_data_for_model
 from model import train_fivesec_model

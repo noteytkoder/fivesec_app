@@ -1,3 +1,4 @@
+# data_handler/buffers.py
 """
 Модуль хранения буферов данных и вспомогательных функций доступа.
 Содержит глобальные очереди, блокировки и утилиту получения DataFrame.
@@ -6,14 +7,14 @@
 from collections import deque
 from threading import Lock
 import pandas as pd
-import hashlib  # Для хэша
+import hashlib
 
 from .config import config, logger
 
 # Глобальные буферы и блокировки
 buffer_lock = Lock()
 fivesec_buffer = deque(maxlen=config["data"]["buffer_size"])
-orderbook_buffer = deque(maxlen=config["data"]["buffer_orderbook_size"])  # Теперь хранит предвычисленные фичи
+orderbook_buffer = deque(maxlen=config["data"]["buffer_orderbook_size"])
 fivesec_predictions = deque(maxlen=config["data"]["buffer_size"])
 fivesec_prediction_file_lock = Lock()
 

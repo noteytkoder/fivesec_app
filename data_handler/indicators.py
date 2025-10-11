@@ -1,3 +1,4 @@
+# data_handler/indicators.py
 """
 Модуль расчёта технических индикаторов и подготовки данных для модели.
 Содержит функции преобразования timestamp, проверки индекса, расчёта RSI,
@@ -20,14 +21,14 @@ def ensure_datetime_index(df):
     """
     if not isinstance(df.index, pd.DatetimeIndex):
         if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True).tz_convert(MSK_TZ)
             df.set_index("timestamp", inplace=True)
         else:
             logger.error("No 'timestamp' column found in DataFrame")
             return None
     return df.sort_index()
 
-def compute_rsi(data, periods=14):  # Увеличено до 14
+def compute_rsi(data, periods=14):
     """Вычисляет RSI по ряду данных."""
     delta = data.diff()
     gain = delta.where(delta > 0, 0).rolling(window=periods).mean()
@@ -38,9 +39,12 @@ def compute_rsi(data, periods=14):  # Увеличено до 14
 def calculate_indicators(df):
     """
     Добавляет RSI, SMA, логарифм объёма и лаги.
-    Возвращает DataFrame без NaN.
+    Возвращает DataFrame без NaN, если данных достаточно.
     """
     try:
+        if len(df) < config["model"].get("rsi_window", 14) + 3:  # Учитываем лаги и RSI
+            logger.warning(f"Insufficient data for indicators: {len(df)} rows")
+            return None
         original_len = len(df)
         df["rsi"] = compute_rsi(df["close"], config["model"].get("rsi_window", 14))
         df["sma"] = df["close"].rolling(window=config["model"].get("sma_window", 3)).mean()
@@ -51,9 +55,8 @@ def calculate_indicators(df):
             shifts.columns = [f"{col}_lag_{lag}" for lag in lags]
             df = pd.concat([df, shifts], axis=1)
         df = df.dropna()
-        logger.info(f"After indicators: shape={df.shape}, NaN={df.isna().sum().sum()}, rows dropped={original_len - len(df)}")
-        logger.info(f"Unique close values after indicators: {df['close'].nunique()}")
-        return df
+        logger.info(f"After indicators: shape={df.shape}, NaN={df.isna().sum().sum()}")
+        return df if not df.empty else None
     except Exception as e:
         logger.error(f"Error calculating indicators: {e}")
         return None
@@ -67,14 +70,14 @@ def process_data_for_model(df, interval="5s"):
         df = ensure_datetime_index(df)
         if df is None:
             return None
-        logger.info(f"Raw data before resample: unique close values={df['close'].nunique()}")
+        if len(df) < config["data"]["min_records"]:
+            logger.warning(f"Insufficient data for resample: {len(df)} rows")
+            return None
         df = df.resample(interval).agg({
             "open": "first", "high": "max", "low": "min",
             "close": "last", "volume": "sum"
-        }).interpolate(method="linear").ffill(limit=2).dropna()  # Ограниченный ffill
-        logger.info(f"After resample ({interval}): shape={df.shape}, NaN={df.isna().sum().sum()}, unique close={df['close'].nunique()}")
-        if df["low"].nunique() == 1:
-            logger.warning("Column 'low' has constant value, check data source")
+        }).interpolate(method="linear").ffill(limit=2).dropna()
+        logger.info(f"After resample ({interval}): shape={df.shape}, NaN={df.isna().sum().sum()}")
         return calculate_indicators(df)
     except Exception as e:
         logger.error(f"Error processing data for interval {interval}: {e}", exc_info=True)
@@ -88,23 +91,11 @@ def process_orderbook_for_model(orderbook_df, interval="5s"):
         if orderbook_df is None or orderbook_df.empty:
             logger.warning("No order book data available")
             return None
-        logger.info(f"orderbook_df raw: shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
-        
-        # Фильтрация аномалий
-        orderbook_df = orderbook_df[np.abs(orderbook_df["spread_5"] - orderbook_df["spread_5"].mean()) <= 2 * orderbook_df["spread_5"].std()]  # Усиленный фильтр
+        orderbook_df = ensure_datetime_index(orderbook_df)
         orderbook_df["mid_price_delta"] = orderbook_df["mid_price"].diff().fillna(0.0)
-        orderbook_df = orderbook_df[np.abs(orderbook_df["mid_price_delta"] - orderbook_df["mid_price_delta"].mean()) <= 2 * orderbook_df["mid_price_delta"].std()]
-        orderbook_df = orderbook_df[np.abs(orderbook_df["imbalance_10"] - orderbook_df["imbalance_10"].mean()) <= 2 * orderbook_df["imbalance_10"].std()]
-        orderbook_df = orderbook_df[np.abs(orderbook_df["rel_bid_volume_10"] - orderbook_df["rel_bid_volume_10"].mean()) <= 2 * orderbook_df["rel_bid_volume_10"].std()]
-        orderbook_df = orderbook_df[np.abs(orderbook_df["rel_ask_volume_10"] - orderbook_df["rel_ask_volume_10"].mean()) <= 2 * orderbook_df["rel_ask_volume_10"].std()]
-        orderbook_df = orderbook_df[np.abs(orderbook_df["delta_bid_vol_10"] - orderbook_df["delta_bid_vol_10"].mean()) <= 2 * orderbook_df["delta_bid_vol_10"].std()]
-        orderbook_df = orderbook_df[np.abs(orderbook_df["delta_ask_vol_10"] - orderbook_df["delta_ask_vol_10"].mean()) <= 2 * orderbook_df["delta_ask_vol_10"].std()]
-        
         orderbook_df = orderbook_df.drop(columns=["mid_price", "bid_volume_10", "ask_volume_10"], errors="ignore")
         orderbook_df = orderbook_df.resample(interval).mean().interpolate(method="linear").ffill(limit=2).dropna()
         logger.info(f"Processed orderbook ({interval}): shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
-        logger.info(f"Filtered spread_5 stats: mean={orderbook_df['spread_5'].mean()}, std={orderbook_df['spread_5'].std()}, min={orderbook_df['spread_5'].min()}, max={orderbook_df['spread_5'].max()}")
-        logger.info(f"Filtered mid_price_delta stats: mean={orderbook_df['mid_price_delta'].mean()}, std={orderbook_df['mid_price_delta'].std()}, min={orderbook_df['mid_price_delta'].min()}, max={orderbook_df['mid_price_delta'].max()}")
         return orderbook_df
     except Exception as e:
         logger.error(f"Error processing order book: {e}", exc_info=True)
@@ -120,9 +111,6 @@ def merge_features(kline_df, orderbook_df):
         if kline_df is None or orderbook_df is None:
             logger.error("Invalid input for merge_features")
             return None
-        
-        kline_df.index = kline_df.index.tz_convert(MSK_TZ)
-        orderbook_df.index = orderbook_df.index.tz_convert(MSK_TZ)
 
         merged_df = pd.merge_asof(
             kline_df.reset_index(), orderbook_df.reset_index(),
@@ -131,9 +119,7 @@ def merge_features(kline_df, orderbook_df):
         if merged_df.empty:
             logger.error("Merged DataFrame is empty")
             return None
-        logger.info(f"Merged: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}")
-        corr_matrix = merged_df.corr()
-        logger.info(f"Correlation with close:\n{corr_matrix['close'].sort_values(ascending=False)}")
+        logger.info(f"After merge: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}")
         return merged_df.dropna()
     except Exception as e:
         logger.error(f"Error merging features: {e}", exc_info=True)
