@@ -10,3 +10,5 @@ PyYAML
 Requests
 scikit_learn
 websockets
+xgboost
+lightgbm

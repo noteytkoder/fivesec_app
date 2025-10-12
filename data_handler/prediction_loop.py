@@ -13,7 +13,7 @@ from config_manager import load_config
 from logger import setup_logger, setup_predictions_logger
 from .buffers import fivesec_predictions, fivesec_prediction_file_lock, get_current_buffer_df, orderbook_buffer, get_current_orderbook_df
 from .indicators import process_data_for_model, process_orderbook_for_model, merge_features
-from model import predict_fivesec
+from model import predict_fivesec, get_model
 from .config import LOGS_DIR, MSK_TZ, INTERVAL_SECONDS
 
 async def fivesec_prediction_loop(root_dir):
@@ -47,43 +47,40 @@ async def fivesec_prediction_loop(root_dir):
             
             df = get_current_buffer_df()
             if df is None or len(df) < config["data"]["min_records"]:
-                logger.warning(f"Insufficient kline data: {len(df) if df is not None else 'None'}", extra={'source': 'prediction_loop'})
+                logger.warning(f"Недостаточно данных kline: {len(df) if df is not None else 'None'}", extra={'source': 'prediction_loop'})
                 await asyncio.sleep(wait_seconds)
                 continue
             df = process_data_for_model(df, interval="5s")
             if df is None or df.empty:
-                logger.warning("Failed to process kline data", extra={'source': 'prediction_loop'})
+                logger.warning("Ошибка обработки данных kline", extra={'source': 'prediction_loop'})
                 await asyncio.sleep(wait_seconds)
                 continue
 
-            logger.debug(f"Processed kline: shape={df.shape}, columns={df.columns.tolist()}", extra={'source': 'prediction_loop'})
+            logger.debug(f"Обработанные kline: форма={df.shape}, столбцы={df.columns.tolist()}", extra={'source': 'prediction_loop'})
 
             if use_orderbook:
                 if not orderbook_buffer:
-                    logger.warning("Orderbook buffer empty", extra={'source': 'prediction_loop'})
+                    logger.warning("Буфер стакана пуст", extra={'source': 'prediction_loop'})
                     await asyncio.sleep(wait_seconds)
                     continue
                 
                 orderbook_df = get_current_orderbook_df()
-                if orderbook_df is not None and not orderbook_df.empty:
-                    orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
-                    if orderbook_df is not None and not orderbook_df.empty:
-                        logger.debug(f"Processed orderbook: shape={orderbook_df.shape}, columns={orderbook_df.columns.tolist()}", extra={'source': 'prediction_loop'})
-                    else:
-                        logger.warning("Failed to process orderbook data", extra={'source': 'prediction_loop'})
-                        await asyncio.sleep(wait_seconds)
-                        continue
-                else:
-                    logger.warning("No orderbook data available", extra={'source': 'prediction_loop'})
+                if orderbook_df is None or orderbook_df.empty:
+                    logger.warning("Нет данных стакана", extra={'source': 'prediction_loop'})
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
+                if orderbook_df is None or orderbook_df.empty:
+                    logger.warning("Ошибка обработки данных стакана", extra={'source': 'prediction_loop'})
                     await asyncio.sleep(wait_seconds)
                     continue
                 
                 features_df = merge_features(df, orderbook_df)
                 if features_df is None or features_df.empty:
-                    logger.warning("Failed to merge kline and orderbook data", extra={'source': 'prediction_loop'})
+                    logger.warning("Ошибка слияния данных kline и стакана", extra={'source': 'prediction_loop'})
                     await asyncio.sleep(wait_seconds)
                     continue
-                logger.info(f"Features for pred: shape={features_df.shape}, NaN={features_df.isna().sum().sum()}", extra={'source': 'prediction_loop'})
+                logger.info(f"Признаки для предсказания: форма={features_df.shape}, NaN={features_df.isna().sum().sum()}", extra={'source': 'prediction_loop'})
                 feature_columns = [
                     "close", "rsi", "sma", "volume", "log_volume",
                     "close_lag_1", "close_lag_2", "close_lag_3",
@@ -105,7 +102,13 @@ async def fivesec_prediction_loop(root_dir):
 
             missing_features = [col for col in feature_columns if col not in features_df.columns]
             if missing_features:
-                logger.error(f"Missing features: {missing_features}", extra={'source': 'prediction_loop'})
+                logger.error(f"Отсутствуют признаки: {missing_features}", extra={'source': 'prediction_loop'})
+                await asyncio.sleep(wait_seconds)
+                continue
+
+            model = get_model(use_orderbook)
+            if not model.is_fitted:
+                logger.warning(f"Модель (use_orderbook={use_orderbook}) не обучена, пропуск предсказания", extra={'source': 'prediction_loop'})
                 await asyncio.sleep(wait_seconds)
                 continue
 
@@ -148,6 +151,6 @@ async def fivesec_prediction_loop(root_dir):
                     pd.DataFrame(list(fivesec_predictions)).to_csv(csv_file_path, mode='w', index=False, encoding='utf-8')
                     last_csv_write_time = current_time
         except Exception as e:
-            logger.error(f"Error in fivesec_prediction_loop: {e}", exc_info=True, extra={'source': 'prediction_loop'})
+            logger.error(f"Ошибка в fivesec_prediction_loop: {e}", exc_info=True, extra={'source': 'prediction_loop'})
         elapsed = time.time() - start
         await asyncio.sleep(max(0, wait_seconds - elapsed))

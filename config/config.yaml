@@ -4,7 +4,7 @@ auth:
   username: admin
 data:
   buffer_orderbook_size: 5000
-  buffer_size: 5000
+  buffer_size: 500
   csv_write_interval: 30
   download_range: 1hour
   fivesec_train_interval: 60
@@ -16,7 +16,35 @@ model:
   min_fivesec_candles: 1
   min_samples_leaf: 1
   min_samples_split: 11
+  params:
+    lightgbm:
+      colsample_bytree: 0.8
+      device: cpu
+      early_stopping_rounds: 20
+      learning_rate: 0.05
+      max_depth: 6
+      n_estimators: 200
+      num_leaves: 31
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      subsample: 0.8
+    random_forest:
+      max_depth: 8
+      min_samples_leaf: 1
+      min_samples_split: 11
+      n_estimators: 250
+    xgboost:
+      colsample_bytree: 0.8
+      early_stopping_rounds: 20
+      learning_rate: 0.05
+      max_depth: 6
+      n_estimators: 200
+      reg_alpha: 0.1
+      reg_lambda: 1.0
+      subsample: 0.8
+  type: xgboost
   use_orderbook: true
+  use_scaler: false
 timezone: Europe/Moscow
 visual:
   error_band_color: rgba(255,165,0,0.2)
