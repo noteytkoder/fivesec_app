@@ -22,10 +22,10 @@ def create_main_figure(df, show_candles, show_error_band, last_time, error_band_
         fig.add_trace(go.Scatter(x=df.index, y=df["close"], mode="lines", name="Цена закрытия"))
 
     required_cols = [
-        "close","rsi","sma","volume","log_volume",
-        "close_lag_1","close_lag_2","close_lag_3",
-        "rsi_lag_1","rsi_lag_2","rsi_lag_3",
-        "sma_lag_1","sma_lag_2","sma_lag_3"
+        "close", "rsi", "sma", "volume", "log_volume",
+        "close_lag_1", "close_lag_2", "close_lag_3",
+        "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+        "sma_lag_1", "sma_lag_2", "sma_lag_3"
     ]
     if not all(col in df.columns for col in required_cols) or len(df) == 0:
         return fig
@@ -52,6 +52,14 @@ def create_main_figure(df, show_candles, show_error_band, last_time, error_band_
                 line=dict(color="rgba(255,255,255,0)"),
                 name=f"Зона погрешности (±{error_band_width:.2f} USDT)"
             ))
+    
+    fig.update_layout(
+        title="BTC/USDT: Цена",
+        xaxis_title="Время (MSK)",
+        yaxis_title="Цена (USDT)",
+        template="plotly_dark",
+        uirevision="main_graph"  # Сохраняет настройки зума
+    )
     return fig
 
 def create_prediction_figure(pred_df, mse, mae, pred_count, last_time, time_delta, x_range_pred, y_range):
@@ -82,29 +90,15 @@ def create_prediction_figure(pred_df, mse, mae, pred_count, last_time, time_delt
             annotation_text = (f"MSE: {mse:.2f}, MAE: {mae:.2f}, Количество: {pred_count}" if mse is not None and mae is not None else "Ожидание данных")
         
         fig.add_annotation(xref="paper", yref="paper", x=0.05, y=0.95, text=annotation_text, showarrow=False, font=dict(size=12, color="white"))
-        fig.update_layout(title="BTC/USDT: Фактические и предсказанные цены (5 секунд)",
-                          xaxis_title="Время (MSK)", yaxis_title="Цена (USDT)",
-                          xaxis_range=x_range_pred, yaxis_range=y_range, showlegend=True, height=400, template="plotly_dark")
+        fig.update_layout(
+            title="BTC/USDT: Фактические и предсказанные цены (5 секунд)",
+            xaxis_title="Время (MSK)",
+            yaxis_title="Цена (USDT)",
+            xaxis_range=x_range_pred,
+            yaxis_range=y_range,
+            showlegend=True,
+            height=400,
+            template="plotly_dark",
+            uirevision="pred_graph"  # Сохраняет настройки зума
+        )
     return fig, style
-
-# def create_orderbook_figure(orderbook_df):
-#     """
-#     Создаёт график для отображения данных стакана (например, временной ряд imbalance).
-#     """
-#     if orderbook_df is None or orderbook_df.empty:
-#         return go.Figure()
-#     
-#     fig = go.Figure()
-#     fig.add_trace(go.Scatter(
-#         x=orderbook_df.index,
-#         y=orderbook_df["imbalance"],
-#         mode="lines",
-#         name="Bid/Ask Imbalance"
-#     ))
-#     fig.update_layout(
-#         title="Order Book Imbalance",
-#         xaxis_title="Time",
-#         yaxis_title="Imbalance",
-#         template="plotly_dark"
-#     )
-#     return fig

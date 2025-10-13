@@ -34,12 +34,60 @@ class PredictorModel:
         self.is_fitted = False  # Флаг для проверки, обучена ли модель
 
     def _build_model(self):
+        # Общие параметры из config['model']
+        common_params = {
+            'max_depth': config['model'].get('fivesec_max_depth', 8),
+            'n_estimators': config['model'].get('fivesec_n_estimators', 250),
+            'min_samples_leaf': config['model'].get('min_samples_leaf', 1),
+            'min_samples_split': config['model'].get('min_samples_split', 11),
+            'learning_rate': config['model'].get('learning_rate', 0.05),
+            'subsample': config['model'].get('subsample', 0.8),
+            'colsample_bytree': config['model'].get('colsample_bytree', 0.8),
+            'reg_alpha': config['model'].get('reg_alpha', 0.1),
+            'reg_lambda': config['model'].get('reg_lambda', 1.0),
+            'early_stopping_rounds': config['model'].get('early_stopping_rounds', 20)
+        }
+        # Обновляем общие параметры специфичными для модели
+        model_specific_params = config['model']['params'].get(self.model_type, {})
+        final_params = {**common_params, **model_specific_params}
+
         if self.model_type == 'random_forest':
-            return RandomForestRegressor(**self.params, random_state=42)
+            # Для RF используем только релевантные параметры
+            rf_params = {
+                'max_depth': final_params['max_depth'],
+                'n_estimators': final_params['n_estimators'],
+                'min_samples_leaf': final_params['min_samples_leaf'],
+                'min_samples_split': final_params['min_samples_split'],
+                'random_state': 42
+            }
+            return RandomForestRegressor(**rf_params)
         elif self.model_type == 'xgboost':
-            return xgb.XGBRegressor(**self.params, random_state=42, objective='reg:squarederror')  # Явно XGBRegressor
+            xgb_params = {
+                'max_depth': final_params['max_depth'],
+                'n_estimators': final_params['n_estimators'],
+                'learning_rate': final_params['learning_rate'],
+                'subsample': final_params['subsample'],
+                'colsample_bytree': final_params['colsample_bytree'],
+                'reg_alpha': final_params['reg_alpha'],
+                'reg_lambda': final_params['reg_lambda'],
+                'random_state': 42,
+                'objective': 'reg:squarederror'
+            }
+            return xgb.XGBRegressor(**xgb_params)
         elif self.model_type == 'lightgbm':
-            return lgb.LGBMRegressor(**self.params, random_state=42, verbose=-1)
+            lgb_params = {
+                'max_depth': final_params['max_depth'],
+                'n_estimators': final_params['n_estimators'],
+                'learning_rate': final_params['learning_rate'],
+                'subsample': final_params['subsample'],
+                'colsample_bytree': final_params['colsample_bytree'],
+                'reg_alpha': final_params['reg_alpha'],
+                'reg_lambda': final_params['reg_lambda'],
+                'num_leaves': final_params.get('num_leaves', 31),  # Специфично для LightGBM
+                'random_state': 42,
+                'verbose': -1
+            }
+            return lgb.LGBMRegressor(**lgb_params)
         else:
             raise ValueError(f"Неизвестный тип модели: {self.model_type}")
 
@@ -53,7 +101,7 @@ class PredictorModel:
         if self.model_type in ['xgboost', 'lightgbm'] and eval_set:
             fit_params = {}
             if 'early_stopping_rounds' in self.model.fit.__code__.co_varnames:
-                fit_params['early_stopping_rounds'] = self.params.get('early_stopping_rounds', 10)
+                fit_params['early_stopping_rounds'] = self.params.get('early_stopping_rounds', 20)
             if self.model_type == 'xgboost':
                 fit_params['verbose'] = False
             self.model.fit(X, y, eval_set=eval_set, **fit_params)
