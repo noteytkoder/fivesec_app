@@ -29,8 +29,8 @@ model:
   reg_lambda: 1.0
   subsample: 0.8
   type: xgboost
-  use_orderbook: false
-  use_scaler: false
+  use_orderbook: true
+  use_scaler: true
 test_all_models: true
 timezone: Europe/Moscow
 visual:
