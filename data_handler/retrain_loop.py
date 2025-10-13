@@ -27,6 +27,8 @@ async def fivesec_retrain_loop():
         try:
             config = load_config()
             train_interval = config["data"]["fivesec_train_interval"]
+            test_all = config.get("test_all_models", False)
+            use_orderbook = config["model"].get("use_orderbook", False)
 
             current_time = time.time()
             df = get_current_buffer_df()
@@ -54,13 +56,20 @@ async def fivesec_retrain_loop():
                 continue
 
             if current_time - last_train_time >= train_interval and len(df) >= config["model"].get("min_fivesec_candles", 1):
-                use_orderbook = config["model"].get("use_orderbook", False)
-                train_fivesec_model(df, use_orderbook=use_orderbook)
-                model = get_model(use_orderbook)
-                if model.is_fitted:
-                    logger.info(f"5-секундная модель переобучена (use_orderbook={use_orderbook}), сэмплов={len(df)}", extra={'source': 'retrain_loop'})
+                train_fivesec_model(df, use_orderbook=use_orderbook)  # Обучает все три или одну
+                models = get_model(use_orderbook)
+                if test_all:
+                    for m_type, model in models.items():
+                        if model.is_fitted:
+                            logger.info(f"5-секундная модель {m_type} переобучена (use_orderbook={use_orderbook}), сэмплов={len(df)}", extra={'source': 'retrain_loop'})
+                        else:
+                            logger.warning(f"Модель {m_type} (use_orderbook={use_orderbook}) не обучена, проверьте ошибки", extra={'source': 'retrain_loop'})
                 else:
-                    logger.warning(f"Модель (use_orderbook={use_orderbook}) не обучена, проверьте ошибки", extra={'source': 'retrain_loop'})
+                    if models.is_fitted:
+                        logger.info(f"5-секундная модель переобучена (use_orderbook={use_orderbook}), сэмплов={len(df)}", extra={'source': 'retrain_loop'})
+                    else:
+                        logger.warning(f"Модель (use_orderbook={use_orderbook}) не обучена, проверьте ошибки", extra={'source': 'retrain_loop'})
+                last_train_time = current_time
             await asyncio.sleep(train_interval)
         except Exception as e:
             logger.error(f"Ошибка в fivesec_retrain_loop: {e}", exc_info=True, extra={'source': 'retrain_loop'})

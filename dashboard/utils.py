@@ -60,9 +60,24 @@ def prepare_pred_df(msk_tz, last_time, time_delta, fivesec_predictions, pred_fil
     pred_df["fivesec_pred_time"] = pd.to_datetime(pred_df["fivesec_pred_time"]).dt.tz_convert(msk_tz)
     pred_df = pred_df[pred_df["timestamp"] >= (last_time - time_delta)]
 
-    mse = mae = None
-    valid = pred_df[pred_df["fivesec_error"].notna()]
-    if not valid.empty:
-        mse = (valid["fivesec_error"] ** 2).mean()
-        mae = valid["fivesec_error"].abs().mean()
-    return pred_df, mse, mae, len(pred_df), None
+    config_local = load_config()
+    test_all = config_local.get("test_all_models", False)
+    if test_all:
+        mse = {}
+        mae = {}
+        model_map = {'rf': 'random_forest', 'xgb': 'xgboost', 'lgb': 'lightgbm'}
+        for m_type in ['rf', 'xgb', 'lgb']:
+            error_col = f"fivesec_error_{m_type}"
+            if error_col in pred_df.columns:
+                valid = pred_df[pred_df[error_col].notna()]
+                if not valid.empty:
+                    mse[model_map[m_type]] = (valid[error_col] ** 2).mean()
+                    mae[model_map[m_type]] = valid[error_col].abs().mean()
+        return pred_df, mse, mae, len(pred_df), None
+    else:
+        mse = mae = None
+        valid = pred_df[pred_df["fivesec_error"].notna()]
+        if not valid.empty:
+            mse = (valid["fivesec_error"] ** 2).mean()
+            mae = valid["fivesec_error"].abs().mean()
+        return pred_df, mse, mae, len(pred_df), None

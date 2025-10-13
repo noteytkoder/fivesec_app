@@ -99,117 +99,131 @@ class PredictorModel:
         return results
 
     def save(self, path):
-        if self.model_type == 'random_forest':
+        if self.model_type in ['random_forest', 'lightgbm']:
             joblib.dump(self.model, path)
-        else:
+        elif self.model_type == 'xgboost':
             self.model.save_model(path)
+        else:
+            raise ValueError(f"Неизвестный тип модели для сохранения: {self.model_type}")
         if self.use_scaler:
             joblib.dump(self.scaler, path + '_scaler.pkl')
 
     def load(self, path):
-        if self.model_type == 'random_forest':
+        if self.model_type in ['random_forest', 'lightgbm']:
             self.model = joblib.load(path)
         elif self.model_type == 'xgboost':
             self.model = xgb.XGBRegressor()
             self.model.load_model(path)
-        elif self.model_type == 'lightgbm':
-            self.model = lgb.LGBMRegressor()
-            self.model.booster_ = lgb.Booster(model_file=path)
+        else:
+            raise ValueError(f"Неизвестный тип модели для загрузки: {self.model_type}")
+        self.is_fitted = True
         if self.use_scaler and os.path.exists(path + '_scaler.pkl'):
             self.scaler = joblib.load(path + '_scaler.pkl')
-        self.is_fitted = True
-
-# Менеджер моделей
-model_manager = {
-    "kline_only": None,
-    "kline_with_orderbook": None
-}
 
 def get_model(use_orderbook=False):
-    key = "kline_with_orderbook" if use_orderbook else "kline_only"
-    if model_manager[key] is None:
-        model_type = config['model']['type']
-        params = config['model']['params'].get(model_type, {})
-        use_scaler = config['model'].get('use_scaler', False)
-        model_manager[key] = PredictorModel(model_type, params, use_scaler, use_orderbook)
-    return model_manager[key]
+    config = load_config()
+    test_all = config.get("test_all_models", False)
+    model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
+    
+    if test_all:
+        models = {}
+        for m_type in ['random_forest', 'xgboost', 'lightgbm']:
+            path = f"models/{m_type}_{model_key}.model"
+            models[m_type] = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
+            if os.path.exists(path):
+                models[m_type].load(path)
+        return models  # Возвращает dict {type: model}
+    else:
+        m_type = config["model"]["type"]
+        path = f"models/{m_type}_{model_key}.model"
+        model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
+        if os.path.exists(path):
+            model.load(path)
+        return model  # Одна модель
 
 def train_fivesec_model(df, use_orderbook=False):
-    """
-    Обучение 5-секундной модели.
-    """
-    model = get_model(use_orderbook)
+    config = load_config()
+    test_all = config.get("test_all_models", False)
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
-    try:
-        logger.debug(f"train_fivesec_model ({model_key}): Форма входного датафрейма: {df.shape}, столбцы: {df.columns.tolist()}")
-        
-        window_seconds = config["model"]["fivesec_train_window_seconds"]
-        df = df.tail(int(window_seconds / 5))
-        logger.debug(f"train_fivesec_model ({model_key}): После ограничения окна, форма: {df.shape}")
-        
-        if len(df) < config["model"]["min_fivesec_candles"]:
-            logger.warning(f"Недостаточно данных для обучения 5-сек ({model_key}): {len(df)} свечей, требуется: {config['model']['min_fivesec_candles']}")
+    
+    orderbook_df = None
+    if use_orderbook:
+        orderbook_df = get_current_orderbook_df()
+        if orderbook_df is None or orderbook_df.empty:
+            logger.warning(f"Нет данных стакана для обучения ({model_key})")
             return
-        
-        if use_orderbook:
-            orderbook_df = get_current_orderbook_df()
-            if orderbook_df is None or orderbook_df.empty:
-                logger.warning(f"Нет данных стакана для обучения ({model_key})")
-                return
-            orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
-            if orderbook_df is None or orderbook_df.empty:
-                logger.warning(f"Ошибка обработки данных стакана для обучения ({model_key})")
-                return
-            df = merge_features(df, orderbook_df)
-            if df is None or df.empty:
-                logger.warning(f"Ошибка слияния данных kline и стакана ({model_key})")
-                return
-        
-        features = [
-            "close", "rsi", "sma", "volume", "log_volume",
-            "close_lag_1", "close_lag_2", "close_lag_3",
-            "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-            "sma_lag_1", "sma_lag_2", "sma_lag_3"
+        orderbook_df = process_orderbook_for_model(orderbook_df, interval="5s")
+        if orderbook_df is None or orderbook_df.empty:
+            logger.warning(f"Ошибка обработки данных стакана для обучения ({model_key})")
+            return
+        df = merge_features(df, orderbook_df)
+        if df is None or df.empty:
+            logger.warning(f"Ошибка слияния данных kline и стакана ({model_key})")
+            return
+    
+    features = [
+        "close", "rsi", "sma", "volume", "log_volume",
+        "close_lag_1", "close_lag_2", "close_lag_3",
+        "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+        "sma_lag_1", "sma_lag_2", "sma_lag_3"
+    ]
+    if use_orderbook:
+        features += [
+            "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
+            "delta_bid_vol_10", "delta_ask_vol_10"
         ]
-        if use_orderbook:
-            features += [
-                "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
-                "delta_bid_vol_10", "delta_ask_vol_10"
-            ]
-        
-        target = df["close"].shift(-1)
-        valid_idx = target.notna()
-        X = df[features][valid_idx]
-        y = target[valid_idx]
-        
-        logger.debug(f"train_fivesec_model ({model_key}): Форма признаков: {X.shape}, Форма цели: {y.shape}")
-        
-        if len(X) < config["model"]["min_fivesec_candles"]:
-            logger.warning(f"Слишком мало валидных 5-сек сэмплов ({model_key}): {len(X)}, требуется: {config['model']['min_fivesec_candles']}")
-            return
-        
-        if X.isna().any().any() or np.any(np.isinf(X.values)):
-            logger.error(f"NaN или Inf в признаках ({model_key}): {X.isna().sum()}")
-            return
-        
-        if np.any(X.std() == 0):
-            logger.warning(f"Нулевое стандартное отклонение в признаках ({model_key}): {X.std()}")
-            return
-        
-        logger.info(f"{model_key} перед обучением: X.shape={X.shape}, y.shape={y.shape}")
-        logger.info(f"{model_key} столбцы: {X.columns.tolist()}")
-        logger.info(f"{model_key} NaN по столбцам:\n{X.isna().sum()}")
-        logger.info(f"{model_key} уникальные по столбцам:\n{X.nunique()}")
-        logger.info(f"{model_key} std по столбцам:\n{X.std()}")
-        logger.info(f"{model_key} describe:\n{X.describe().T}")
-        
-        Xs_df = pd.DataFrame(X, index=X.index, columns=X.columns)
-        logger.info(f"{model_key} форма: {Xs_df.shape}")
-        logger.info(f"{model_key} средние (приблизительно):\n{Xs_df.mean().round(6)}")
-        logger.info(f"{model_key} std (приблизительно):\n{Xs_df.std().round(6)}")
-        logger.info(f"{model_key} NaN после: {Xs_df.isna().any().any()}")
-        logger.info(f"Описание цели y: среднее={y.mean()}, std={y.std()}, мин={y.min()}, макс={y.max()}")
-        
+    
+    target = df["close"].shift(-1)
+    valid_idx = target.notna()
+    X = df[features][valid_idx]
+    y = target[valid_idx]
+    
+    logger.debug(f"train_fivesec_model ({model_key}): Форма признаков: {X.shape}, Форма цели: {y.shape}")
+    
+    if len(X) < config["model"]["min_fivesec_candles"]:
+        logger.warning(f"Слишком мало валидных 5-сек сэмплов ({model_key}): {len(X)}, требуется: {config['model']['min_fivesec_candles']}")
+        return
+    
+    if X.isna().any().any() or np.any(np.isinf(X.values)):
+        logger.error(f"NaN или Inf в признаках ({model_key}): {X.isna().sum()}")
+        return
+    
+    if np.any(X.std() == 0):
+        logger.warning(f"Нулевое стандартное отклонение в признаках ({model_key}): {X.std()}")
+        return
+    
+    logger.info(f"{model_key} перед обучением: X.shape={X.shape}, y.shape={y.shape}")
+    logger.info(f"{model_key} столбцы: {X.columns.tolist()}")
+    logger.info(f"{model_key} NaN по столбцам:\n{X.isna().sum()}")
+    logger.info(f"{model_key} уникальные по столбцам:\n{X.nunique()}")
+    logger.info(f"{model_key} std по столбцам:\n{X.std()}")
+    logger.info(f"{model_key} describe:\n{X.describe().T}")
+    
+    Xs_df = pd.DataFrame(X, index=X.index, columns=X.columns)
+    logger.info(f"{model_key} форма: {Xs_df.shape}")
+    logger.info(f"{model_key} средние (приблизительно):\n{Xs_df.mean().round(6)}")
+    logger.info(f"{model_key} std (приблизительно):\n{Xs_df.std().round(6)}")
+    logger.info(f"{model_key} NaN после: {Xs_df.isna().any().any()}")
+    logger.info(f"Описание цели y: среднее={y.mean()}, std={y.std()}, мин={y.min()}, макс={y.max()}")
+    
+    if test_all:
+        for m_type in ['random_forest', 'xgboost', 'lightgbm']:
+            model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
+            if m_type in ['xgboost', 'lightgbm']:
+                tscv = TimeSeriesSplit(n_splits=3)
+                for train_idx, val_idx in tscv.split(X):
+                    X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+                    X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
+                    eval_set = [(X_val, y_val)]
+                    model.fit(X_train, y_train, eval_set=eval_set)
+                    model.score(X_val, y_val)
+            else:
+                model.fit(X, y)
+            model.save(f"models/{m_type}_{model_key}.model")
+            logger.info(f"Обучена модель {m_type} для {model_key}")
+    else:
+        m_type = config["model"]["type"]
+        model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
         if model.model_type in ['xgboost', 'lightgbm']:
             tscv = TimeSeriesSplit(n_splits=3)
             for train_idx, val_idx in tscv.split(X):
@@ -222,38 +236,69 @@ def train_fivesec_model(df, use_orderbook=False):
             model.fit(X, y)
         
         model.save(f"models/{model.model_type}_{model_key}.model")
-    except Exception as e:
-        logger.error(f"Ошибка обучения модели {model_key}: {e}", exc_info=True)
 
 def predict_fivesec(features, use_orderbook=False):
-    model = get_model(use_orderbook)
+    models = get_model(use_orderbook)  # Теперь dict или одна модель
+    config = load_config()
+    test_all = config.get("test_all_models", False)
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
     try:
-        if model is None or not model.is_fitted:
-            logger.warning(f"Модель {model_key} не инициализирована или не обучена")
-            return None
-        
-        expected_features = [
-            "close", "rsi", "sma", "volume", "log_volume",
-            "close_lag_1", "close_lag_2", "close_lag_3",
-            "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
-            "sma_lag_1", "sma_lag_2", "sma_lag_3"
-        ]
-        if use_orderbook:
-            expected_features += [
-                "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
-                "delta_bid_vol_10", "delta_ask_vol_10"
+        if test_all:
+            if not isinstance(models, dict):
+                logger.warning(f"Модели {model_key} не инициализированы или не обучены")
+                return None
+            predictions = {}
+            expected_features = [
+                "close", "rsi", "sma", "volume", "log_volume",
+                "close_lag_1", "close_lag_2", "close_lag_3",
+                "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+                "sma_lag_1", "sma_lag_2", "sma_lag_3"
             ]
-        
-        if not all(col in features.columns for col in expected_features):
-            logger.error(f"Отсутствуют признаки в входе предсказания ({model_key}): {features.columns.tolist()}")
-            return None
-        if features.isna().any().any() or np.any(np.isinf(features.values)):
-            logger.error(f"NaN или Inf в признаках предсказания ({model_key})")
-            return None
-        
-        features = features[expected_features]
-        return model.predict(features)[0]
+            if use_orderbook:
+                expected_features += [
+                    "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
+                    "delta_bid_vol_10", "delta_ask_vol_10"
+                ]
+            if not all(col in features.columns for col in expected_features):
+                logger.error(f"Отсутствуют признаки в входе предсказания ({model_key}): {features.columns.tolist()}")
+                return None
+            if features.isna().any().any() or np.any(np.isinf(features.values)):
+                logger.error(f"NaN или Inf в признаках предсказания ({model_key})")
+                return None
+            features = features[expected_features]
+            for m_type, model in models.items():
+                if not model.is_fitted:
+                    logger.warning(f"Модель {m_type} не обучена")
+                    continue
+                predictions[m_type] = model.predict(features)[0]
+            return predictions  # dict {type: pred_value}
+        else:
+            model = models
+            if model is None or not model.is_fitted:
+                logger.warning(f"Модель {model_key} не инициализирована или не обучена")
+                return None
+            
+            expected_features = [
+                "close", "rsi", "sma", "volume", "log_volume",
+                "close_lag_1", "close_lag_2", "close_lag_3",
+                "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
+                "sma_lag_1", "sma_lag_2", "sma_lag_3"
+            ]
+            if use_orderbook:
+                expected_features += [
+                    "imbalance_10", "rel_bid_volume_10", "rel_ask_volume_10",
+                    "delta_bid_vol_10", "delta_ask_vol_10"
+                ]
+            
+            if not all(col in features.columns for col in expected_features):
+                logger.error(f"Отсутствуют признаки в входе предсказания ({model_key}): {features.columns.tolist()}")
+                return None
+            if features.isna().any().any() or np.any(np.isinf(features.values)):
+                logger.error(f"NaN или Inf в признаках предсказания ({model_key})")
+                return None
+            
+            features = features[expected_features]
+            return model.predict(features)[0]
     except Exception as e:
         logger.error(f"Ошибка предсказания {model_key}: {e}", exc_info=True)
         return None

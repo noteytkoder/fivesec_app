@@ -4,7 +4,7 @@ auth:
   username: admin
 data:
   buffer_orderbook_size: 5000
-  buffer_size: 500
+  buffer_size: 5000
   csv_write_interval: 30
   download_range: 1hour
   fivesec_train_interval: 60
@@ -43,8 +43,9 @@ model:
       reg_lambda: 1.0
       subsample: 0.8
   type: xgboost
-  use_orderbook: true
+  use_orderbook: false
   use_scaler: false
+test_all_models: true
 timezone: Europe/Moscow
 visual:
   error_band_color: rgba(255,165,0,0.2)

@@ -33,6 +33,10 @@ def create_main_figure(df, show_candles, show_error_band, last_time, error_band_
     features = df.iloc[-1][required_cols]
     try:
         prediction = predict_fivesec(pd.DataFrame([features]))
+        if isinstance(prediction, dict):
+            # Выбираем прогноз от основной модели (из config) или среднее
+            main_type = config["model"]["type"]
+            prediction = prediction.get(main_type, sum(prediction.values()) / len(prediction))
     except Exception:
         prediction = None
 
@@ -55,9 +59,28 @@ def create_prediction_figure(pred_df, mse, mae, pred_count, last_time, time_delt
     style = {"display": "block" if not pred_df.empty else "none"} if isinstance(pred_df, pd.DataFrame) else {"display": "none"}
     if pred_df is not None and not pred_df.empty:
         filtered = pred_df[pred_df["timestamp"] >= (last_time - time_delta)]
-        fig.add_trace(go.Scatter(x=filtered["timestamp"], y=filtered["actual_price"], mode="lines", name="Фактическая цена"))
-        fig.add_trace(go.Scatter(x=filtered["fivesec_pred_time"], y=filtered["fivesec_pred"], mode="lines", name="Предсказанная цена (5 сек)"))
-        annotation_text = (f"MSE: {mse:.2f}, MAE: {mae:.2f}, Количество: {pred_count}" if mse is not None and mae is not None else "Ожидание данных")
+        fig.add_trace(go.Scatter(x=filtered["timestamp"], y=filtered["actual_price"], mode="lines", name="Фактическая цена", line=dict(color="blue")))
+        
+        config_local = load_config()
+        test_all = config_local.get("test_all_models", False)
+        if test_all:
+            fig.add_trace(go.Scatter(x=filtered["fivesec_pred_time"], y=filtered["fivesec_pred_rf"], mode="lines", name="Предсказанная (RF)", line=dict(color="orange")))
+            fig.add_trace(go.Scatter(x=filtered["fivesec_pred_time"], y=filtered["fivesec_pred_xgb"], mode="lines", name="Предсказанная (XGB)", line=dict(color="purple")))
+            fig.add_trace(go.Scatter(x=filtered["fivesec_pred_time"], y=filtered["fivesec_pred_lgb"], mode="lines", name="Предсказанная (LGB)", line=dict(color="green")))
+            
+            # Для метрик предполагаем, что mse и mae - dict { 'random_forest': value, ... }
+            if isinstance(mse, dict) and isinstance(mae, dict):
+                annotation_text = (
+                    f"RF: MSE={mse.get('random_forest', 0):.2f}, MAE={mae.get('random_forest', 0):.2f}; "
+                    f"XGB: MSE={mse.get('xgboost', 0):.2f}, MAE={mae.get('xgboost', 0):.2f}; "
+                    f"LGB: MSE={mse.get('lightgbm', 0):.2f}, MAE={mae.get('lightgbm', 0):.2f}; Количество: {pred_count}"
+                )
+            else:
+                annotation_text = "Ожидание данных"
+        else:
+            fig.add_trace(go.Scatter(x=filtered["fivesec_pred_time"], y=filtered["fivesec_pred"], mode="lines", name="Предсказанная цена (5 сек)"))
+            annotation_text = (f"MSE: {mse:.2f}, MAE: {mae:.2f}, Количество: {pred_count}" if mse is not None and mae is not None else "Ожидание данных")
+        
         fig.add_annotation(xref="paper", yref="paper", x=0.05, y=0.95, text=annotation_text, showarrow=False, font=dict(size=12, color="white"))
         fig.update_layout(title="BTC/USDT: Фактические и предсказанные цены (5 секунд)",
                           xaxis_title="Время (MSK)", yaxis_title="Цена (USDT)",
@@ -70,7 +93,7 @@ def create_prediction_figure(pred_df, mse, mae, pred_count, last_time, time_delt
 #     """
 #     if orderbook_df is None or orderbook_df.empty:
 #         return go.Figure()
-    
+#     
 #     fig = go.Figure()
 #     fig.add_trace(go.Scatter(
 #         x=orderbook_df.index,
