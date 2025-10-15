@@ -8,7 +8,7 @@ SMA, лагов и агрегации свечей.
 import pandas as pd
 import numpy as np
 from .config import config, MSK_TZ, logger
-from .buffers import get_current_orderbook_df
+from .buffers import get_current_orderbook_df, sample_tail_head
 
 def process_timestamp(ms_timestamp):
     """Преобразует timestamp (мс) в pandas.Timestamp с TZ=MSK_TZ."""
@@ -84,9 +84,6 @@ def process_data_for_model(df, interval="5s"):
         return None
 
 def process_orderbook_for_model(orderbook_df, interval="5s"):
-    """
-    Обработка буфера стакана: ресэмплинг и добавление дельты mid_price.
-    """
     try:
         if orderbook_df is None or orderbook_df.empty:
             logger.warning("No order book data available")
@@ -95,23 +92,26 @@ def process_orderbook_for_model(orderbook_df, interval="5s"):
         orderbook_df["mid_price_delta"] = orderbook_df["mid_price"].diff().fillna(0.0)
         orderbook_df = orderbook_df.drop(columns=["mid_price", "bid_volume_10", "ask_volume_10"], errors="ignore")
         orderbook_df = orderbook_df.resample(interval).mean().interpolate(method="linear").ffill(limit=2).dropna()
+        logger.info(f"process_orderbook_for_model AFTER resample: {sample_tail_head(orderbook_df)}")
+        logger.info(f"process_orderbook_for_model STATS:\n{orderbook_df.describe().T[['mean','std','min','max']].round(6)}")
+        repeated_mid = (orderbook_df['mid_price_delta'].diff() == 0).astype(int).groupby((orderbook_df['mid_price_delta'].diff() != 0).cumsum()).sum().max()
+        logger.info(f"process_orderbook max constant-mid_delta run={repeated_mid}")
+        if (orderbook_df['imbalance_10'].abs() > 1).any():
+            logger.warning("process_orderbook_for_model: imbalance >1 detected")
         logger.info(f"Processed orderbook ({interval}): shape={orderbook_df.shape}, NaN={orderbook_df.isna().sum().sum()}")
         return orderbook_df
     except Exception as e:
         logger.error(f"Error processing order book: {e}", exc_info=True)
         return None
-
+    
 def merge_features(kline_df, orderbook_df):
-    """
-    Объединение признаков kline и стакана по времени.
-    """
     try:
         kline_df = ensure_datetime_index(kline_df)
         orderbook_df = ensure_datetime_index(orderbook_df)
         if kline_df is None or orderbook_df is None:
             logger.error("Invalid input for merge_features")
             return None
-
+        logger.info(f"merge_features INPUT: kline {sample_tail_head(kline_df, n=2)} ob {sample_tail_head(orderbook_df, n=2)}")
         merged_df = pd.merge_asof(
             kline_df.reset_index(), orderbook_df.reset_index(),
             on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=1)
@@ -119,10 +119,12 @@ def merge_features(kline_df, orderbook_df):
         if merged_df.empty:
             logger.error("Merged DataFrame is empty")
             return None
-
-        # Новое: интерполяция и заполнение нулём вместо dropna()
+        logger.info(f"merge_features AFTER: {sample_tail_head(merged_df)}")
+        if merged_df.isna().sum().sum() > 0:
+            logger.warning(f"merge_features NaN count={merged_df.isna().sum().to_dict()}")
+        dt = (merged_df.index.to_series() - kline_df.index.to_series()[:len(merged_df)]).abs().dt.total_seconds()
+        logger.info(f"merge time deltas stats: {dt.describe().round(2).to_dict()}")
         merged_df = merged_df.interpolate(method="linear").fillna(0)
-
         logger.info(f"After merge: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}")
         return merged_df
     except Exception as e:

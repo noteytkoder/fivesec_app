@@ -8,7 +8,7 @@ from collections import deque
 from threading import Lock
 import pandas as pd
 import hashlib
-
+import numpy as np
 from .config import config, logger
 
 # Глобальные буферы и блокировки
@@ -47,6 +47,7 @@ def get_current_buffer_df():
     df.drop_duplicates(subset=["timestamp"], inplace=True)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df.set_index("timestamp", inplace=True)
+    logger.info(f"kline DF SAMPLE:\n{sample_tail_head(df)}")
     return df.sort_index()
 
 def get_current_orderbook_df():
@@ -64,4 +65,22 @@ def get_current_orderbook_df():
         return None
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df.set_index("timestamp", inplace=True)
+    logger.debug(f"get_current_orderbook_df: shape={df.shape} NaN={df.isna().sum().sum()} Inf={np.isinf(df.values).any()}")
+    logger.info(f"OB DF SAMPLE:\n{sample_tail_head(df)}")
+    repeated_mid = (df['mid_price'].diff() == 0).astype(int).groupby((df['mid_price'].diff() != 0).cumsum()).sum().max()
+    logger.info(f"OB max constant-mid run={repeated_mid}")
+    if (df['imbalance_10'].abs() > 1).any():
+        logger.warning("get_current_orderbook_df: imbalance >1 detected")
     return df.sort_index()
+
+def sample_tail_head(df, n=3):
+    if df.empty:
+        return "Empty DataFrame"
+    stats = f"shape={df.shape} NaN={df.isna().sum().sum()}"
+    # Проверяем Inf только для числовых столбцов
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    inf_check = np.isinf(df[numeric_cols].values).any() if not df[numeric_cols].empty else False
+    stats += f" Inf={inf_check}"
+    dups = f"duplicates_index={df.index.duplicated().sum()}"
+    gaps = f"index_gaps_sec: {df.index.to_series().diff().dt.total_seconds().describe().round(2).to_dict()}" if isinstance(df.index, pd.DatetimeIndex) else "index_gaps_sec: Not a DatetimeIndex"
+    return f"head:\n{df.head(n)}\n\ntail:\n{df.tail(n)}\n\n{stats}\n{dups}\n{gaps}"
