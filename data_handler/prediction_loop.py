@@ -94,7 +94,7 @@ async def fivesec_prediction_loop(root_dir):
                     "close_lag_1", "close_lag_2", "close_lag_3",
                     "rsi_lag_1", "rsi_lag_2", "rsi_lag_3",
                     "sma_lag_1", "sma_lag_2", "sma_lag_3",
-                    "spread_5", "mid_price_delta", "imbalance_10",
+                     "mid_price_delta", "imbalance_10",
                     "rel_bid_volume_10", "rel_ask_volume_10",
                     "delta_bid_vol_10", "delta_ask_vol_10"
                 ]

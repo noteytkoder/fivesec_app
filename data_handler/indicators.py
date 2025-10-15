@@ -114,13 +114,17 @@ def merge_features(kline_df, orderbook_df):
 
         merged_df = pd.merge_asof(
             kline_df.reset_index(), orderbook_df.reset_index(),
-            on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=5)
+            on="timestamp", direction="nearest", tolerance=pd.Timedelta(seconds=1)
         ).set_index("timestamp")
         if merged_df.empty:
             logger.error("Merged DataFrame is empty")
             return None
+
+        # Новое: интерполяция и заполнение нулём вместо dropna()
+        merged_df = merged_df.interpolate(method="linear").fillna(0)
+
         logger.info(f"After merge: shape={merged_df.shape}, NaN={merged_df.isna().sum().sum()}")
-        return merged_df.dropna()
+        return merged_df
     except Exception as e:
         logger.error(f"Error merging features: {e}", exc_info=True)
         return None

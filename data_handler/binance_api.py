@@ -78,29 +78,42 @@ class OrderBookBuffer:
         return True
 
     def get_features(self, timestamp):
+        if not self.bids or not self.asks:
+            return None
+        
+        best_bid = next(iter(self.bids)) if self.bids else 0
+        best_ask = next(iter(self.asks)) if self.asks else 0
+        mid_price = (best_bid + best_ask) / 2 if best_bid and best_ask else 0
+
+        # Топ-10 levels
         bids_sorted = list(self.bids.items())[:10]
         asks_sorted = list(self.asks.items())[:10]
-        if not bids_sorted or not asks_sorted:
-            return None
-        best_bid_price, best_bid_vol = bids_sorted[0]
-        best_ask_price, best_ask_vol = asks_sorted[0]
-        spread_5 = best_ask_price - best_bid_price
-        mid_price = (best_ask_price + best_bid_price) / 2
+
         bid_volume_10 = sum(vol for _, vol in bids_sorted)
         ask_volume_10 = sum(vol for _, vol in asks_sorted)
+
+        # Расчёт imbalance и relative volumes (как было)
         imbalance_10 = (bid_volume_10 - ask_volume_10) / (bid_volume_10 + ask_volume_10 + 1e-10)
         rel_bid_volume_10 = bid_volume_10 / (bid_volume_10 + ask_volume_10 + 1e-10)
-        rel_ask_volume_10 = ask_volume_10 / (bid_volume_10 + ask_volume_10 + 1e-10)
-        delta_bid_vol_10 = np.diff([vol for _, vol in bids_sorted] + [0]).mean()
-        delta_ask_vol_10 = np.diff([vol for _, vol in asks_sorted] + [0]).mean()
+        rel_ask_volume_10 = 1 - rel_bid_volume_10
+
+        # Временная дельта: разница с предыдущим состоянием (новое)
+        self.prev_bid_volume_10 = getattr(self, "prev_bid_volume_10", 0)  # Инициализация, если нет предыдущего
+        self.prev_ask_volume_10 = getattr(self, "prev_ask_volume_10", 0)
+        
+        delta_bid_vol_10 = bid_volume_10 - self.prev_bid_volume_10
+        delta_ask_vol_10 = ask_volume_10 - self.prev_ask_volume_10
+        
+        # Обновляем предыдущие значения для следующего вызова
+        self.prev_bid_volume_10 = bid_volume_10
+        self.prev_ask_volume_10 = ask_volume_10
+
         return {
             "timestamp": timestamp,
-            "spread_5": spread_5,
             "mid_price": mid_price,
-            "mid_price_delta": 0,
-            "imbalance_10": imbalance_10,
             "bid_volume_10": bid_volume_10,
             "ask_volume_10": ask_volume_10,
+            "imbalance_10": imbalance_10,
             "rel_bid_volume_10": rel_bid_volume_10,
             "rel_ask_volume_10": rel_ask_volume_10,
             "delta_bid_vol_10": delta_bid_vol_10,
