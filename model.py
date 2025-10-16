@@ -1,7 +1,7 @@
 """
 Модуль для обучения и хранения моделей прогнозирования.
 """
-from logger import pd
+import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -9,10 +9,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 import xgboost as xgb
 import lightgbm as lgb
-import joblib
 import psutil
 import time
-import os
 from logger import setup_logger
 from config_manager import load_config
 from data_handler.indicators import process_orderbook_for_model, merge_features
@@ -21,6 +19,9 @@ import hashlib
 
 logger = setup_logger()
 config = load_config()
+
+# Глобальный словарь для хранения обученных моделей в памяти
+FITTED_MODELS = {}  # Ключ: f"{model_key}_{m_type}" или просто model_key для одиночной
 
 class PredictorModel:
     def __init__(self, model_type='random_forest', params=None, use_scaler=False, use_orderbook=False):
@@ -121,7 +122,7 @@ class PredictorModel:
 
     def predict(self, X):
         if not self.is_fitted:
-            raise ValueError(f"Модель {self.model_type} не обучена. Вызовите fit или load_model.")
+            raise ValueError(f"Модель {self.model_type} не обучена.")
         start_time = time.time()
         if self.use_scaler:
             X = self.scaler.transform(X)
@@ -146,28 +147,6 @@ class PredictorModel:
         logger.info(f"Метрики {self.model_type}: {results}")
         return results
 
-    def save(self, path):
-        if self.model_type in ['random_forest', 'lightgbm']:
-            joblib.dump(self.model, path)
-        elif self.model_type == 'xgboost':
-            self.model.save_model(path)
-        else:
-            raise ValueError(f"Неизвестный тип модели для сохранения: {self.model_type}")
-        if self.use_scaler:
-            joblib.dump(self.scaler, path + '_scaler.pkl')
-
-    def load(self, path):
-        if self.model_type in ['random_forest', 'lightgbm']:
-            self.model = joblib.load(path)
-        elif self.model_type == 'xgboost':
-            self.model = xgb.XGBRegressor()
-            self.model.load_model(path)
-        else:
-            raise ValueError(f"Неизвестный тип модели для загрузки: {self.model_type}")
-        self.is_fitted = True
-        if self.use_scaler and os.path.exists(path + '_scaler.pkl'):
-            self.scaler = joblib.load(path + '_scaler.pkl')
-
 def get_model(use_orderbook=False):
     config = load_config()
     test_all = config.get("test_all_models", False)
@@ -176,20 +155,28 @@ def get_model(use_orderbook=False):
     if test_all:
         models = {}
         for m_type in ['random_forest', 'xgboost', 'lightgbm']:
-            path = f"models/{m_type}_{model_key}.model"
-            models[m_type] = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
-            if os.path.exists(path):
-                models[m_type].load(path)
-        return models  # Возвращает dict {type: model}
+            key = f"{model_key}_{m_type}"
+            if key in FITTED_MODELS:
+                models[m_type] = FITTED_MODELS[key]
+                logger.debug(f"Модель {m_type} для {model_key} взята из памяти (fitted={models[m_type].is_fitted})")
+            else:
+                models[m_type] = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
+                logger.warning(f"Модель {m_type} для {model_key} не найдена в памяти, создана новая (не обучена)")
+        return models  # dict {type: model}
     else:
         m_type = config["model"]["type"]
-        path = f"models/{m_type}_{model_key}.model"
-        model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
-        if os.path.exists(path):
-            model.load(path)
-        return model  # Одна модель
+        key = model_key
+        if key in FITTED_MODELS:
+            model = FITTED_MODELS[key]
+            logger.debug(f"Модель {m_type} для {model_key} взята из памяти (fitted={model.is_fitted})")
+            return model
+        else:
+            model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
+            logger.warning(f"Модель {m_type} для {model_key} не найдена в памяти, создана новая (не обучена)")
+            return model
 
 def train_fivesec_model(df, use_orderbook=False):
+    global FITTED_MODELS
     config = load_config()
     test_all = config.get("test_all_models", False)
     model_key = "kline_with_orderbook" if use_orderbook else "kline_only"
@@ -251,8 +238,9 @@ def train_fivesec_model(df, use_orderbook=False):
                         model.score(X_val, y_val)
                 else:
                     model.fit(X, y)
-                model.save(f"models/{m_type}_{model_key}.model")
-                logger.info(f"Обучена модель {m_type} для {model_key}")
+                key = f"{model_key}_{m_type}"
+                FITTED_MODELS[key] = model  # Сохраняем в память
+                logger.info(f"Обучена и сохранена в памяти модель {m_type} для {model_key}")
         else:
             m_type = config["model"]["type"]
             model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)
@@ -264,9 +252,11 @@ def train_fivesec_model(df, use_orderbook=False):
                     eval_set = [(X_val, y_val)]
                     model.fit(X_train, y_train, eval_set=eval_set)
                     model.score(X_val, y_val)
-                else:
-                    model.fit(X, y)
-            model.save(f"models/{model.model_type}_{model_key}.model")
+            else:
+                model.fit(X, y)
+            key = model_key
+            FITTED_MODELS[key] = model  # Сохраняем в память
+            logger.info(f"Обучена и сохранена в памяти модель {m_type} для {model_key}")
     except Exception as e:
         logger.error(f"Error training model {model_key}: {e}", exc_info=True)
 
