@@ -1,3 +1,4 @@
+# app.py (добавить dbc theme)
 """
 Фабрика Dash-приложения.
 Создаёт dash.Dash с BasicAuth, секретным ключом и layout.
@@ -10,12 +11,13 @@ from config_manager import load_config, load_environment_config
 from logger import setup_logger
 from .layout import build_layout
 import time
+import dash_bootstrap_components as dbc  # Для тем и tooltips
 
 def create_dash_app():
     config = load_config()
     env_name = config.get("app_env")
     env_conf = load_environment_config()
-    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..")) # тут мб не нужно на шаг выше, но хз
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     logger = setup_logger(log_dir=os.path.join(ROOT_DIR, "logs"))
 
     dash_app = Dash(__name__, assets_folder="static")

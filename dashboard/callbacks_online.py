@@ -315,28 +315,62 @@ def register_online_callbacks(app, config, buffer_deque):
             logger.info("Система перезапущена через UI")
         return 0
 
-    # Apply settings
     @app.callback(
         Output("apply-settings", "n_clicks"),
         [
             Input("apply-settings", "n_clicks"),
             Input("buffer-size", "value"),
+            Input("buffer-orderbook-size", "value"),  # Новое
+            Input("csv-write-interval", "value"),
             Input("fivesec-train-interval", "value"),
+            Input("model-type", "value"),
+            Input("test-all-models", "value"),
             Input("fivesec-max-depth", "value"),
             Input("fivesec-n_estimators", "value"),
             Input("fivesec-train-window-seconds", "value"),
-            Input("csv-write-interval", "value"),
+            Input("learning-rate", "value"),
+            Input("subsample", "value"),
+            Input("colsample-bytree", "value"),
+            Input("early-stopping-rounds", "value"),
+            Input("reg-alpha", "value"),
+            Input("reg-lambda", "value"),
+            Input("min-samples-leaf", "value"),
+            Input("min-samples-split", "value"),
+            Input("use-orderbook", "value"),
+            Input("use-scaler", "value"),
+            Input("num-leaves", "value"),  # Новое
+            Input("update-interval", "value"),
+            Input("predicted-price-color", "value"),
+            Input("error-band-color", "value"),
+            Input("error-band-multiplier", "value"),
         ],
         prevent_initial_call=True
     )
-    def apply_settings(n_clicks, buffer_size, train_interval, max_depth, n_estimators, train_window, csv_interval):
+    def apply_settings(n_clicks, buffer_size, csv_interval, train_interval, model_type, test_all, max_depth, n_estimators, train_window, learning_rate, subsample, colsample_bytree, early_stopping_rounds, reg_alpha, reg_lambda, min_samples_leaf, min_samples_split, use_orderbook, use_scaler, num_leaves, update_interval, predicted_price_color, error_band_color, error_band_multiplier):
         if n_clicks and n_clicks > 0:
             config["data"]["buffer_size"] = buffer_size
+            config["data"]["csv_write_interval"] = csv_interval
             config["data"]["fivesec_train_interval"] = train_interval
+            config["model"]["type"] = model_type
+            config["test_all_models"] = bool(test_all)
             config["model"]["fivesec_max_depth"] = max_depth
             config["model"]["fivesec_n_estimators"] = n_estimators
             config["model"]["fivesec_train_window_seconds"] = train_window
-            config["data"]["csv_write_interval"] = csv_interval
+            config["model"]["learning_rate"] = learning_rate
+            config["model"]["subsample"] = subsample
+            config["model"]["colsample_bytree"] = colsample_bytree
+            config["model"]["early_stopping_rounds"] = early_stopping_rounds
+            config["model"]["reg_alpha"] = reg_alpha
+            config["model"]["reg_lambda"] = reg_lambda
+            config["model"]["min_samples_leaf"] = min_samples_leaf
+            config["model"]["min_samples_split"] = min_samples_split
+            config["model"]["use_orderbook"] = bool(use_orderbook)
+            config["model"]["use_scaler"] = bool(use_scaler)
+            config["model"]["params"]["lightgbm"]["num_leaves"] = num_leaves
+            config["visual"]["update_interval"] = update_interval
+            config["visual"]["predicted_price_color"] = predicted_price_color
+            config["visual"]["error_band_color"] = error_band_color
+            config["visual"]["error_band_multiplier"] = error_band_multiplier
             save_config(config)
             logger.info("Настройки обновлены через UI")
         return 0

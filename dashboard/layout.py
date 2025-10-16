@@ -1,3 +1,4 @@
+# layout.py
 """
 Layout Dash-приложения.
 Формирует основной layout, использует панели из panels.py.
@@ -12,10 +13,10 @@ def build_layout(config):
         html.Div(id="orderbook-status", children=create_orderbook_status_panel()),  # Новая панель статуса стакана
         dcc.Checklist(
             id="model-selector",
-            options=[{"label": "Use Order Book Model", "value": "orderbook"}],
+            options=[{"label": "Использовать модель со стаканом", "value": "orderbook"}],
             value=["orderbook"] if config["model"].get("use_orderbook", False) else []
         ),
-        html.P(id="model-status", children="Model: Kline Only"),  # Статус модели
+        html.P(id="model-status", children="Модель: Только Kline"),  # Статус модели
         dcc.Interval(id="interval-component", interval=config["visual"]["update_interval"], n_intervals=0),
         dcc.Interval(id="server-status-interval", interval=5000, n_intervals=0),
         dcc.Store(id="graph-layout", data={}),

@@ -14,7 +14,7 @@ from .config import config, logger
 # Глобальные буферы и блокировки
 buffer_lock = Lock()
 fivesec_buffer = deque(maxlen=config["data"]["buffer_size"])
-orderbook_buffer = deque(maxlen=config["data"]["buffer_orderbook_size"])
+orderbook_buffer = deque(maxlen=config["data"]["buffer_size"])
 fivesec_predictions = deque(maxlen=config["data"]["buffer_size"])
 fivesec_prediction_file_lock = Lock()
 

@@ -3,7 +3,6 @@ auth:
   password: qwerty63
   username: admin
 data:
-  buffer_orderbook_size: 500
   buffer_size: 500
   csv_write_interval: 30
   download_range: 1hour
@@ -25,8 +24,8 @@ model:
       num_leaves: 31
     random_forest: {}
     xgboost: {}
-  reg_alpha: 0.1
-  reg_lambda: 1.0
+  reg_alpha: 0.2
+  reg_lambda: 1
   subsample: 0.8
   type: xgboost
   use_orderbook: true
