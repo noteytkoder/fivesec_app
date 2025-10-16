@@ -2,7 +2,7 @@
 Функции построения графиков.
 """
 import plotly.graph_objects as go
-import pandas as pd
+from logger import pd
 from model import predict_fivesec
 from config_manager import load_config
 

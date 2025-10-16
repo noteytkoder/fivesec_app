@@ -5,7 +5,7 @@
 SMA, лагов и агрегации свечей.
 """
 
-import pandas as pd
+from logger import pd
 import numpy as np
 from .config import config, MSK_TZ, logger
 from .buffers import get_current_orderbook_df, sample_tail_head

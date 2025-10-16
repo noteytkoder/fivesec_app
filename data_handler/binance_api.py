@@ -4,7 +4,7 @@
 и работы с WebSocket (producer/consumer).
 """
 
-import pandas as pd
+from logger import pd
 import requests
 import asyncio
 import json

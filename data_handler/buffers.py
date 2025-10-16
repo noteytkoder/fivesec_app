@@ -6,7 +6,7 @@
 
 from collections import deque
 from threading import Lock
-import pandas as pd
+from logger import pd
 import hashlib
 import numpy as np
 from .config import config, logger

@@ -2,7 +2,7 @@
 Утилиты для Dashboard: подготовка данных, кэш.
 """
 
-import pandas as pd
+from logger import pd
 from . import __name__ as pkgname
 from data_handler import process_data_for_model
 from config_manager import load_config

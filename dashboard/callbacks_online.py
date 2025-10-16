@@ -5,7 +5,7 @@
 import os
 import time
 import psutil
-import pandas as pd
+from logger import pd
 from dash import no_update, html
 from dash.dependencies import Input, Output, State
 from flask import Response

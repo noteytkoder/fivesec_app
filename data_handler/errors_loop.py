@@ -5,7 +5,7 @@
 """
 
 import asyncio
-import pandas as pd
+from logger import pd
 import numpy as np
 from config_manager import load_config
 from logger import setup_logger

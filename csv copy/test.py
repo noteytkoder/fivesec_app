@@ -4,7 +4,7 @@
 Вычисляет метрики (MSE, MAE, точность тренда) и строит графики для моделей RF, XGB, LGB.
 """
 
-import pandas as pd
+from logger import pd
 import plotly.graph_objects as go
 import plotly.express as px
 from pathlib import Path

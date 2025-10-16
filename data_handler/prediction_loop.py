@@ -6,7 +6,7 @@
 
 import os
 import time
-import pandas as pd
+from logger import pd
 from collections import deque
 import asyncio
 from config_manager import load_config

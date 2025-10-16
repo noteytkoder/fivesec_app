@@ -4,7 +4,7 @@
 Обновляет метрики и графики каждые 5 секунд, позволяет выбирать файлы или папку.
 """
 
-import pandas as pd
+from logger import pd
 import plotly.graph_objects as go
 import dash
 from dash import dcc, html, Input, Output, State

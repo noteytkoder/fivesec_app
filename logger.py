@@ -1,6 +1,13 @@
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import pandas as pd
+
+pd.set_option("display.max_columns", None)  # Показывать все столбцы без ...
+pd.set_option("display.width", 2000)       # Ширина консоли для полного вывода
+pd.set_option("display.max_rows", 50)      # Лимит строк (можно увеличить, если нужно)
+
+__all__ = ["pd"]
 
 def setup_logger(log_dir="logs", default_source="unknown"):
     """Настройка основного логгера с поддержкой source"""
