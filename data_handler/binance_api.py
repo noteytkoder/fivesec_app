@@ -19,8 +19,8 @@ from sortedcontainers import SortedDict
 
 class OrderBookBuffer:
     def __init__(self, depth=500):
-        self.bids = SortedDict(reverse=True)
-        self.asks = SortedDict()
+        self.bids = SortedDict()  # ascending by price
+        self.asks = SortedDict()  # ascending by price
         self.last_update_id = None
         self.depth = depth
         self.sync_issues_count = 0
@@ -48,16 +48,18 @@ class OrderBookBuffer:
         if self.last_update_id is None:
             logger.debug(f"No snapshot available, ignoring diff: U={U}, u={u}")
             return False
-        if u < self.last_update_id:
+        if u <= self.last_update_id:
             logger.debug(f"Ignoring outdated diff: U={U}, u={u}, last_update_id={self.last_update_id}")
             return False
-        if U > self.last_update_id + 100:  # Увеличен порог для большей гибкости
-            logger.warning(f"Out-of-sync diff: U={U}, u={u}, last_update_id={self.last_update_id}")
+        if U > self.last_update_id + 1:  # Strict check for gap
+            logger.warning(f"Gap detected (out-of-sync): U={U} != {self.last_update_id + 1}, u={u}")
             self.sync_issues_count += 1
-            if self.sync_issues_count >= 5:  # Запрос нового снимка после 5 ошибок
-                logger.info("Too many sync issues, requesting new snapshot")
+            if self.sync_issues_count >= 2:
+                logger.info("Gap issues threshold reached, requesting new snapshot")
+                self.sync_issues_count = 0
                 return False
-            return False
+            return False  # Do not apply if gap
+        # Apply only if U == last +1
         for price, volume in data.get("b", []):
             price = round(float(price), 2)
             volume = float(volume)
@@ -79,46 +81,57 @@ class OrderBookBuffer:
 
     def get_features(self, timestamp):
         if not self.bids or not self.asks:
+            logger.warning("Orderbook bids or asks are empty, skipping features")
             return None
         
-        best_bid = next(iter(self.bids)) if self.bids else 0
-        best_ask = next(iter(self.asks)) if self.asks else 0
-        mid_price = (best_bid + best_ask) / 2 if best_bid and best_ask else 0
+        try:
+            # Получаем отсортированные ключи (цены) из SortedDict
+            bid_keys = list(self.bids.keys())  # Список цен в порядке возрастания
+            ask_keys = list(self.asks.keys())  # Список цен в порядке возрастания
+            best_bid = bid_keys[-1] if bid_keys else 0  # Последний ключ — максимальный bid
+            best_ask = ask_keys[0] if ask_keys else 0   # Первый ключ — минимальный ask
+            mid_price = (best_bid + best_ask) / 2 if best_bid and best_ask else 0
 
-        # Топ-10 levels
-        bids_sorted = list(self.bids.items())[:10]
-        asks_sorted = list(self.asks.items())[:10]
+            # Топ-10 levels: highest для bids (last 10), lowest для asks (first 10)
+            bids_sorted = list(self.bids.items())[-10:]  # Последние 10 (высшие bids)
+            asks_sorted = list(self.asks.items())[:10]   # Первые 10 (низшие asks)
 
-        bid_volume_10 = sum(vol for _, vol in bids_sorted)
-        ask_volume_10 = sum(vol for _, vol in asks_sorted)
+            bid_volume_10 = sum(vol for _, vol in bids_sorted)
+            ask_volume_10 = sum(vol for _, vol in asks_sorted)
 
-        # Расчёт imbalance и relative volumes (как было)
-        imbalance_10 = (bid_volume_10 - ask_volume_10) / (bid_volume_10 + ask_volume_10 + 1e-10)
-        rel_bid_volume_10 = bid_volume_10 / (bid_volume_10 + ask_volume_10 + 1e-10)
-        rel_ask_volume_10 = 1 - rel_bid_volume_10
+            # Расчёт imbalance и relative volumes
+            imbalance_10 = (bid_volume_10 - ask_volume_10) / (bid_volume_10 + ask_volume_10 + 1e-10)
+            rel_bid_volume_10 = bid_volume_10 / (bid_volume_10 + ask_volume_10 + 1e-10)
+            rel_ask_volume_10 = 1 - rel_bid_volume_10
 
-        # Временная дельта: разница с предыдущим состоянием (новое)
-        self.prev_bid_volume_10 = getattr(self, "prev_bid_volume_10", 0)  # Инициализация, если нет предыдущего
-        self.prev_ask_volume_10 = getattr(self, "prev_ask_volume_10", 0)
-        
-        delta_bid_vol_10 = bid_volume_10 - self.prev_bid_volume_10
-        delta_ask_vol_10 = ask_volume_10 - self.prev_ask_volume_10
-        
-        # Обновляем предыдущие значения для следующего вызова
-        self.prev_bid_volume_10 = bid_volume_10
-        self.prev_ask_volume_10 = ask_volume_10
+            # Временная дельта: разница с предыдущим состоянием
+            self.prev_bid_volume_10 = getattr(self, "prev_bid_volume_10", 0)
+            self.prev_ask_volume_10 = getattr(self, "prev_ask_volume_10", 0)
+            
+            delta_bid_vol_10 = bid_volume_10 - self.prev_bid_volume_10
+            delta_ask_vol_10 = ask_volume_10 - self.prev_ask_volume_10
+            
+            # Обновляем предыдущие значения
+            self.prev_bid_volume_10 = bid_volume_10
+            self.prev_ask_volume_10 = ask_volume_10
 
-        return {
-            "timestamp": timestamp,
-            "mid_price": mid_price,
-            "bid_volume_10": bid_volume_10,
-            "ask_volume_10": ask_volume_10,
-            "imbalance_10": imbalance_10,
-            "rel_bid_volume_10": rel_bid_volume_10,
-            "rel_ask_volume_10": rel_ask_volume_10,
-            "delta_bid_vol_10": delta_bid_vol_10,
-            "delta_ask_vol_10": delta_ask_vol_10
-        }
+            # Дополнительное логирование для отладки
+            logger.debug(f"get_features: best_bid={best_bid}, best_ask={best_ask}, mid_price={mid_price}, len_bids={len(self.bids)}, len_asks={len(self.asks)}")
+
+            return {
+                "timestamp": timestamp,
+                "mid_price": mid_price,
+                "bid_volume_10": bid_volume_10,
+                "ask_volume_10": ask_volume_10,
+                "imbalance_10": imbalance_10,
+                "rel_bid_volume_10": rel_bid_volume_10,
+                "rel_ask_volume_10": rel_ask_volume_10,
+                "delta_bid_vol_10": delta_bid_vol_10,
+                "delta_ask_vol_10": delta_ask_vol_10
+            }
+        except (IndexError, KeyError) as e:
+            logger.error(f"Error accessing orderbook levels: {e}, bids_len={len(self.bids)}, asks_len={len(self.asks)}")
+            return None
 
 orderbook = OrderBookBuffer()
 
@@ -179,7 +192,7 @@ async def fetch_fivesec_historical_data():
 
 async def fetch_orderbook_snapshot():
     try:
-        url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=100"
+        url = "https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=500"  # Увеличен limit
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         data = response.json()
@@ -208,6 +221,8 @@ async def producer_ws(uri, name, queue):
 
 async def consumer_loop(raw_queue):
     message_count = 0
+    last_resync_time = time.time()  # Для периодического resync
+    resync_interval = 60  # Каждые 60 секунд
     while True:
         try:
             name, raw = await raw_queue.get()
@@ -229,10 +244,11 @@ async def consumer_loop(raw_queue):
                 if message_count % 100 == 0:
                     logger.info(f"Klines processed: {message_count}, buffer size: {len(fivesec_buffer)}")
             elif name == "orderbook_diff" and data.get("e") == "depthUpdate":
+                timestamp = process_timestamp(data["E"])  # Используем event time
                 if not orderbook.apply_diff(data):
                     asyncio.create_task(fetch_orderbook_snapshot())
                 else:
-                    item = orderbook.get_features(pd.Timestamp.now(tz=MSK_TZ))
+                    item = orderbook.get_features(timestamp)
                     if item is not None:
                         with buffer_lock:
                             orderbook_buffer.append(item)
@@ -245,6 +261,11 @@ async def consumer_loop(raw_queue):
                             logger.info(f"OB max constant-mid run={repeated_mid}")
                             if (df_temp['imbalance_10'].abs() > 1).any():
                                 logger.warning("OB APPEND: imbalance >1 detected")
+                # Периодический resync
+                if time.time() - last_resync_time >= resync_interval:
+                    logger.info("Periodic orderbook resync triggered")
+                    asyncio.create_task(fetch_orderbook_snapshot())
+                    last_resync_time = time.time()
             else:
                 logger.warning(f"Invalid message: name={name}")
         except Exception as e:
