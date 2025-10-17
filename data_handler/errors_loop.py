@@ -108,11 +108,11 @@ async def update_fivesec_errors_loop(root_dir=None):
                             preds.at[idx, trend_pred_col] = trend_pred
                             preds.at[idx, trend_actual_col] = trend_actual
                             preds.at[idx, trend_acc_col] = trend_acc
-                            logger.info(
-                                f"Обновлено для {m_type}: idx={idx}, pred={pred:.4f}, actual={actual_price:.4f}, "
-                                f"error={error:.4f}, trend_pred={trend_pred}, trend_actual={trend_actual}, trend_acc={trend_acc}",
-                                extra={'source': 'errors_loop'}
-                            )
+                            # logger.info(
+                            #     f"Обновлено для {m_type}: idx={idx}, pred={pred:.4f}, actual={actual_price:.4f}, "
+                            #     f"error={error:.4f}, trend_pred={trend_pred}, trend_actual={trend_actual}, trend_acc={trend_acc}",
+                            #     extra={'source': 'errors_loop'}
+                            # )
                         else:
                             logger.debug(f"Нет валидного предсказания для {m_type} в idx={idx}", extra={'source': 'errors_loop'})
                 else:
