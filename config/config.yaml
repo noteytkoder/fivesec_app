@@ -27,10 +27,10 @@ model:
   reg_alpha: 0.2
   reg_lambda: 1
   subsample: 0.8
-  type: xgboost
+  type: lightgbm
   use_orderbook: false
   use_scaler: true
-test_all_models: true
+test_all_models: false
 timezone: Europe/Moscow
 visual:
   error_band_color: rgba(255,165,0,0.2)

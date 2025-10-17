@@ -320,7 +320,6 @@ def register_online_callbacks(app, config, buffer_deque):
         [
             Input("apply-settings", "n_clicks"),
             Input("buffer-size", "value"),
-            Input("buffer-orderbook-size", "value"),  # Новое
             Input("csv-write-interval", "value"),
             Input("fivesec-train-interval", "value"),
             Input("model-type", "value"),
@@ -338,21 +337,24 @@ def register_online_callbacks(app, config, buffer_deque):
             Input("min-samples-split", "value"),
             Input("use-orderbook", "value"),
             Input("use-scaler", "value"),
-            Input("num-leaves", "value"),  # Новое
-            Input("update-interval", "value"),
-            Input("predicted-price-color", "value"),
-            Input("error-band-color", "value"),
-            Input("error-band-multiplier", "value"),
+            Input("num-leaves", "value"),
         ],
         prevent_initial_call=True
     )
-    def apply_settings(n_clicks, buffer_size, csv_interval, train_interval, model_type, test_all, max_depth, n_estimators, train_window, learning_rate, subsample, colsample_bytree, early_stopping_rounds, reg_alpha, reg_lambda, min_samples_leaf, min_samples_split, use_orderbook, use_scaler, num_leaves, update_interval, predicted_price_color, error_band_color, error_band_multiplier):
+    def apply_settings(n_clicks, buffer_size, csv_interval, train_interval, model_type, test_all, max_depth, n_estimators, train_window,
+                    learning_rate, subsample, colsample_bytree, early_stopping_rounds, reg_alpha, reg_lambda, min_samples_leaf,
+                    min_samples_split, use_orderbook, use_scaler, num_leaves):
         if n_clicks and n_clicks > 0:
+            # конвертируем чекбоксы в bool
+            use_orderbook = "use_orderbook" in use_orderbook if isinstance(use_orderbook, list) else bool(use_orderbook)
+            use_scaler = "use_scaler" in use_scaler if isinstance(use_scaler, list) else bool(use_scaler)
+            test_all = "test_all" in test_all if isinstance(test_all, list) else bool(test_all)
+
             config["data"]["buffer_size"] = buffer_size
             config["data"]["csv_write_interval"] = csv_interval
             config["data"]["fivesec_train_interval"] = train_interval
             config["model"]["type"] = model_type
-            config["test_all_models"] = bool(test_all)
+            config["test_all_models"] = test_all
             config["model"]["fivesec_max_depth"] = max_depth
             config["model"]["fivesec_n_estimators"] = n_estimators
             config["model"]["fivesec_train_window_seconds"] = train_window
@@ -364,16 +366,12 @@ def register_online_callbacks(app, config, buffer_deque):
             config["model"]["reg_lambda"] = reg_lambda
             config["model"]["min_samples_leaf"] = min_samples_leaf
             config["model"]["min_samples_split"] = min_samples_split
-            config["model"]["use_orderbook"] = bool(use_orderbook)
-            config["model"]["use_scaler"] = bool(use_scaler)
+            config["model"]["use_orderbook"] = use_orderbook
+            config["model"]["use_scaler"] = use_scaler
             config["model"]["params"]["lightgbm"]["num_leaves"] = num_leaves
-            config["visual"]["update_interval"] = update_interval
-            config["visual"]["predicted_price_color"] = predicted_price_color
-            config["visual"]["error_band_color"] = error_band_color
-            config["visual"]["error_band_multiplier"] = error_band_multiplier
             save_config(config)
-            logger.info("Настройки обновлены через UI")
         return 0
+
 
     # Download data
     @app.callback(
