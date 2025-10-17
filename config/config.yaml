@@ -1,4 +1,4 @@
-app_env: dev4
+app_env: dev5
 auth:
   password: qwerty63
   username: admin
@@ -28,7 +28,7 @@ model:
   reg_lambda: 1
   subsample: 0.8
   type: xgboost
-  use_orderbook: true
+  use_orderbook: false
   use_scaler: true
 test_all_models: true
 timezone: Europe/Moscow
