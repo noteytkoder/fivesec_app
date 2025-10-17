@@ -36,7 +36,7 @@ def create_dash_app(mode='main'):
             return create_analysis_app()
         
         logger.debug("Создание основного Dash приложения")
-        dash_app = Dash(__name__, assets_folder="static", external_stylesheets=[dbc.themes.DARKLY])
+        dash_app = Dash(__name__, assets_folder="static")
         logger.debug("Dash приложение инициализировано с темой DARKLY")
         
         dash_app.server.secret_key = secrets.token_hex(16)

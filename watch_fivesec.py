@@ -16,7 +16,7 @@ def run():
         logger.info("Starting fivesec_app.main")
         process = subprocess.Popen(
             ["python", "-m", "main"],
-            cwd=project_root,
+            cwd=ROOT_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
