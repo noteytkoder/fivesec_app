@@ -303,17 +303,16 @@ def register_online_callbacks(app, config, buffer_deque):
             logger.info("Система остановлена через UI")
         return 0
 
-    # Restart system
     @app.callback(
         Output("restart-btn", "n_clicks"),
         Input("restart-btn", "n_clicks"),
         prevent_initial_call=True
     )
     def restart_system_callback(n_clicks):
-        if n_clicks and n_clicks > 0:
-            resume_system()
-            logger.info("Система перезапущена через UI")
-        return 0
+        if n_clicks:
+            Path(os.path.join(ROOT_DIR, "fivesec_restart.flag")).touch()
+            os._exit(0)
+        return n_clicks
 
     @app.callback(
         Output("apply-settings", "n_clicks"),
