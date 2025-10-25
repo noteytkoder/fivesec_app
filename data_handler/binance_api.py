@@ -137,7 +137,7 @@ orderbook = OrderBookBuffer()
 
 async def fetch_fivesec_historical_data():
     try:
-        range_ms = 60 * 60 * 1000
+        range_ms = 60 * 60 * 1000 * 2
         interval = "1s"
         end_time = int(time.time() * 1000)
         start_time = end_time - range_ms

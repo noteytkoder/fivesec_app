@@ -117,7 +117,7 @@ def calculate_metrics(df):
 
 def create_plots(df, config):
     """
-    Создаёт три графика: ошибки, точность тренда, предсказания.
+    Создаёт два графика: ошибки, предсказания.
     Использует темную тему и цветовые настройки из config.
     """
     logger.debug("Запуск create_plots")
@@ -140,28 +140,6 @@ def create_plots(df, config):
             title="Ошибки предсказаний по времени",
             xaxis_title="Время (MSK)",
             yaxis_title="Ошибка (USDT)",
-            template="plotly_dark",
-            showlegend=True
-        )
-
-        # График точности тренда
-        trend_fig = go.Figure()
-        for model, color in [('rf', 'orange'), ('xgb', 'purple'), ('lgb', 'green')]:
-            trend_acc_col = f'fivesec_trend_accuracy_{model}'
-            if trend_acc_col in df.columns:
-                valid = df[df[trend_acc_col].notna()]
-                trend_fig.add_trace(go.Scatter(
-                    x=valid['timestamp'],
-                    y=valid[trend_acc_col],
-                    mode='lines+markers',
-                    name=f'Точность тренда ({model.upper()})',
-                    line=dict(dash='dash' if model != 'rf' else 'solid', color=color)
-                ))
-                logger.debug(f"Добавлен график точности тренда для модели {model}")
-        trend_fig.update_layout(
-            title="Точность предсказания тренда",
-            xaxis_title="Время (MSK)",
-            yaxis_title="Точность тренда",
             template="plotly_dark",
             showlegend=True
         )
@@ -196,10 +174,10 @@ def create_plots(df, config):
         )
 
         logger.info("Графики успешно созданы")
-        return error_fig, trend_fig, pred_fig
+        return error_fig, pred_fig
     except Exception as e:
         logger.error(f"Ошибка в create_plots: {str(e)}", exc_info=True)
-        return go.Figure(), go.Figure(), go.Figure()
+        return go.Figure(), go.Figure()
 
 def create_analysis_app():
     """
@@ -225,7 +203,6 @@ def create_analysis_app():
             html.H1("Анализ предсказаний FiveSec", style={'color': 'white', 'text-align': 'center'}),
             html.Div(id='status-message', style={'color': 'white', 'margin': '10px'}),
             dcc.Graph(id='errors-plot'),
-            dcc.Graph(id='trend-accuracy-plot'),
             dcc.Graph(id='predictions-plot'),
             html.Div(id='metrics-table', style={'margin': '20px'}),
             dcc.Interval(id='interval-component', interval=config['visual']['update_interval'], n_intervals=0)
@@ -234,7 +211,6 @@ def create_analysis_app():
         
         @app.callback(
             [Output('errors-plot', 'figure'),
-             Output('trend-accuracy-plot', 'figure'),
              Output('predictions-plot', 'figure'),
              Output('metrics-table', 'children'),
              Output('status-message', 'children')],
@@ -247,16 +223,16 @@ def create_analysis_app():
                 
                 if df is None:
                     logger.warning("Данные не загружены, возвращаются пустые графики")
-                    return go.Figure(), go.Figure(), go.Figure(), "Нет данных", status
+                    return go.Figure(), go.Figure(), "Нет данных", status
                 
                 metrics, table = calculate_metrics(df)
-                error_fig, trend_fig, pred_fig = create_plots(df, config)
+                error_fig, pred_fig = create_plots(df, config)
                 
                 logger.info("Обновление анализа завершено успешно")
-                return error_fig, trend_fig, pred_fig, table, status
+                return error_fig, pred_fig, table, status
             except Exception as e:
                 logger.error(f"Ошибка в update_analysis: {str(e)}", exc_info=True)
-                return go.Figure(), go.Figure(), go.Figure(), "Ошибка при обновлении", f"Ошибка: {str(e)}"
+                return go.Figure(), go.Figure(), "Ошибка при обновлении", f"Ошибка: {str(e)}"
         
         logger.info("Dash приложение для анализа успешно создано")
         return app

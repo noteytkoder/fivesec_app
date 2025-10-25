@@ -4,33 +4,33 @@ auth:
   username: admin
 data:
   buffer_size: 5000
-  csv_write_interval: 30
+  csv_write_interval: 90
   download_range: 1hour
   fivesec_train_interval: 60
   min_records: 60
 model:
-  colsample_bytree: 0.8
+  colsample_bytree: 0.9
   early_stopping_rounds: 20
-  fivesec_max_depth: 8
-  fivesec_n_estimators: 250
+  fivesec_max_depth: 10
+  fivesec_n_estimators: 600
   fivesec_train_window_seconds: 7200
-  learning_rate: 0.05
+  learning_rate: 0.03
   min_fivesec_candles: 1
   min_samples_leaf: 1
   min_samples_split: 11
   params:
     lightgbm:
       device: cpu
-      num_leaves: 31
+      num_leaves: 96
     random_forest: {}
     xgboost: {}
   reg_alpha: 0.2
   reg_lambda: 1
-  subsample: 0.8
+  subsample: 0.9
   type: lightgbm
   use_orderbook: false
   use_scaler: true
-test_all_models: false
+test_all_models: true
 timezone: Europe/Moscow
 visual:
   error_band_color: rgba(255,165,0,0.2)
