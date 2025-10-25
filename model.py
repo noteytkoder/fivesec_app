@@ -128,7 +128,7 @@ class PredictorModel:
             X = self.scaler.transform(X)
         preds = self.model.predict(X)
         latency = (time.time() - start_time) / len(X) * 1000  # мс на сэмпл
-        logger.debug(f"Задержка предсказания {self.model_type}: {latency:.4f}мс/сэмпл")
+        logger.warning(f"Задержка предсказания {self.model_type}: {latency:.4f}мс/сэмпл")
         return preds
 
     def score(self, X, y, metrics=['mae', 'rmse', 'r2', 'dir_acc']):
@@ -144,7 +144,7 @@ class PredictorModel:
             dir_pred = np.sign(preds - X['close'].values if 'close' in X else 0)
             dir_true = np.sign(y - X['close'].values)
             results['dir_acc'] = np.mean(dir_pred == dir_true)
-        logger.info(f"Метрики {self.model_type}: {results}")
+        logger.debug(f"Метрики {self.model_type}: {results}")
         return results
 
 def get_model(use_orderbook=False):
@@ -210,21 +210,21 @@ def train_fivesec_model(df, use_orderbook=False):
         if X.empty or y.empty:
             logger.error(f"Empty X or y after preparing data: X.shape={X.shape}, y.shape={y.shape}")
             return
-        logger.info(f"TRAIN INPUT: {sample_tail_head(X)} y head={y.head(3).values} tail={y.tail(3).values}")
-        logger.info(f"TRAIN NAN per col:\n{X.isna().sum().to_dict()} Inf={np.isinf(X.values).any()}")
+        logger.debug(f"TRAIN INPUT: {sample_tail_head(X)} y head={y.head(3).values} tail={y.tail(3).values}")
+        logger.debug(f"TRAIN NAN per col:\n{X.isna().sum().to_dict()} Inf={np.isinf(X.values).any()}")
         new_hash = hashlib.md5(pd.util.hash_pandas_object(X, index=True).values).hexdigest()
         logger.debug(f"TRAIN X hash={new_hash}")
         repeated_mid = (X['mid_price_delta'].diff() == 0).astype(int).groupby((X['mid_price_delta'].diff() != 0).cumsum()).sum().max() if 'mid_price_delta' in X else 0
-        logger.info(f"TRAIN max constant-mid_delta run={repeated_mid}")
-        logger.info(f"{model_key} уникальные по столбцам:\n{X.nunique()}")
-        logger.info(f"{model_key} std по столбцам:\n{X.std()}")
-        logger.info(f"{model_key} describe:\n{X.describe().T}")
+        logger.debug(f"TRAIN max constant-mid_delta run={repeated_mid}")
+        logger.debug(f"{model_key} уникальные по столбцам:\n{X.nunique()}")
+        logger.debug(f"{model_key} std по столбцам:\n{X.std()}")
+        logger.debug(f"{model_key} describe:\n{X.describe().T}")
         Xs_df = pd.DataFrame(X, index=X.index, columns=X.columns)
-        logger.info(f"{model_key} форма: {Xs_df.shape}")
-        logger.info(f"{model_key} средние (приблизительно):\n{Xs_df.mean().round(6)}")
-        logger.info(f"{model_key} std (приблизительно):\n{Xs_df.std().round(6)}")
-        logger.info(f"{model_key} NaN после: {Xs_df.isna().any().any()}")
-        logger.info(f"Описание цели y: среднее={y.mean()}, std={y.std()}, мин={y.min()}, макс={y.max()}")
+        logger.debug(f"{model_key} форма: {Xs_df.shape}")
+        logger.debug(f"{model_key} средние (приблизительно):\n{Xs_df.mean().round(6)}")
+        logger.debug(f"{model_key} std (приблизительно):\n{Xs_df.std().round(6)}")
+        logger.debug(f"{model_key} NaN после: {Xs_df.isna().any().any()}")
+        logger.debug(f"Описание цели y: среднее={y.mean()}, std={y.std()}, мин={y.min()}, макс={y.max()}")
         if test_all:
             for m_type in ['random_forest', 'xgboost', 'lightgbm']:
                 model = PredictorModel(model_type=m_type, params=config["model"]["params"].get(m_type, {}), use_scaler=False, use_orderbook=use_orderbook)

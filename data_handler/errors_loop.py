@@ -64,7 +64,7 @@ async def update_fivesec_errors_loop(root_dir=None):
                 await asyncio.sleep(wait_seconds)
                 continue
 
-            logger.info(f"Найдено {len(to_update)} предсказаний для обновления ошибок, пример pred_time: {to_update['fivesec_pred_time'].head().tolist()}", extra={'source': 'errors_loop'})
+            logger.debug(f"Найдено {len(to_update)} предсказаний для обновления ошибок, пример pred_time: {to_update['fivesec_pred_time'].head().tolist()}", extra={'source': 'errors_loop'})
 
             for idx, row in to_update.iterrows():
                 pred_time = row['fivesec_pred_time']

@@ -49,7 +49,7 @@ async def fivesec_retrain_loop():
                 cached_processed_df = df
                 last_buffer_hash = current_hash
 
-            logger.info(f"Обработанный df для переобучения: форма={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'retrain_loop'})
+            logger.debug(f"Обработанный df для переобучения: форма={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'retrain_loop'})
             if df.isna().any().any() or np.any(np.isinf(df.values)):
                 logger.warning("NaN/Inf в обработанном df, пропуск переобучения", extra={'source': 'retrain_loop'})
                 await asyncio.sleep(train_interval)

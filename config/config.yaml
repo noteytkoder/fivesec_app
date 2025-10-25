@@ -12,7 +12,7 @@ model:
   colsample_bytree: 0.9
   early_stopping_rounds: 20
   fivesec_max_depth: 10
-  fivesec_n_estimators: 600
+  fivesec_n_estimators: 150
   fivesec_train_window_seconds: 7200
   learning_rate: 0.03
   min_fivesec_candles: 1

@@ -388,5 +388,14 @@ def register_online_callbacks(app, config, buffer_deque):
             if not df.empty:
                 csv_path = os.path.join(ROOT_DIR, "logs", f"data_download_{pd.Timestamp.now(tz=MSK_TZ).strftime('%Y%m%d_%H%M%S')}.csv")
                 df.to_csv(csv_path, index=False, encoding='utf-8')
-                logger.info(f"Данные скачаны в {csv_path}")
+                logger.debug(f"Данные скачаны в {csv_path}")
         return 0
+    
+    @app.server.route(load_environment_config()[load_config()['app_env']]['logtotal_endpoint'])
+    def logtotal():
+        log_file = os.path.join(ROOT_DIR, "logs", f"fivesec_app.log")
+        if not os.path.exists(log_file):
+            logger.warning(f"Файл лога {log_file} не найден")
+            return Response("Файл лога не найден", status=404, mimetype="text/plain")
+        logger.debug(f"Запрос на logtotal_endpoint: {load_environment_config()[load_config()['app_env']]['logtotal_endpoint']}, файл: {log_file}")
+        return Response(_get_file_reversed(log_file), mimetype="text/plain")

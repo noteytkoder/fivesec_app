@@ -40,7 +40,7 @@ class OrderBookBuffer:
                 self.asks[price] = volume
         self.last_update_id = data.get("lastUpdateId")
         self.sync_issues_count = 0
-        logger.info(f"Order book snapshot applied, last_update_id={self.last_update_id}")
+        logger.debug(f"Order book snapshot applied, last_update_id={self.last_update_id}")
 
     def apply_diff(self, data):
         U = data.get("U")
@@ -179,7 +179,7 @@ async def fetch_fivesec_historical_data():
         with buffer_lock:
             fivesec_buffer.clear()
             fivesec_buffer.extend(df.reset_index().to_dict("records"))
-        logger.info(f"Buffer updated with {len(fivesec_buffer)} records")
+        logger.debug(f"Buffer updated with {len(fivesec_buffer)} records")
 
         if len(fivesec_buffer) >= config["data"]["min_records"]:
             df = process_data_for_model(df, interval="5s")
@@ -201,9 +201,9 @@ async def fetch_orderbook_snapshot():
         if item is not None:
             with buffer_lock:
                 orderbook_buffer.append(item)
-        logger.info(f"SNAPSHOT applied: last_update_id={orderbook.last_update_id} bids={len(orderbook.bids)} asks={len(orderbook.asks)} sync_issues={orderbook.sync_issues_count}")
+        logger.debug(f"SNAPSHOT applied: last_update_id={orderbook.last_update_id} bids={len(orderbook.bids)} asks={len(orderbook.asks)} sync_issues={orderbook.sync_issues_count}")
         df_temp = pd.DataFrame(list(orderbook_buffer)) if orderbook_buffer else pd.DataFrame()
-        logger.info(f"SNAPSHOT SAMPLE:\n{sample_tail_head(df_temp)}")
+        logger.debug(f"SNAPSHOT SAMPLE:\n{sample_tail_head(df_temp)}")
     except Exception as e:
         logger.error(f"Error fetching orderbook snapshot: {e}", exc_info=True)
 
@@ -255,10 +255,10 @@ async def consumer_loop(raw_queue):
                         logger.debug(f"OB APPEND: len={len(orderbook_buffer)} last_ts={item['timestamp']} mid={item['mid_price']:.2f} imb={item['imbalance_10']:.6f}")
                         if len(orderbook_buffer) % 500 == 0:  # Каждые 500 для экономии
                             df_temp = pd.DataFrame(list(orderbook_buffer))
-                            logger.info(f"OB BUFFER SAMPLE ({len(orderbook_buffer)}):\n{sample_tail_head(df_temp)}")
+                            logger.debug(f"OB BUFFER SAMPLE ({len(orderbook_buffer)}):\n{sample_tail_head(df_temp)}")
                             # Проверка константного mid_price
                             repeated_mid = (df_temp['mid_price'].diff() == 0).astype(int).groupby((df_temp['mid_price'].diff() != 0).cumsum()).sum().max()
-                            logger.info(f"OB max constant-mid run={repeated_mid}")
+                            logger.debug(f"OB max constant-mid run={repeated_mid}")
                             if (df_temp['imbalance_10'].abs() > 1).any():
                                 logger.warning("OB APPEND: imbalance >1 detected")
                 # Периодический resync

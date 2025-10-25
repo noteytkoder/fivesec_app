@@ -41,13 +41,13 @@ def get_current_buffer_df():
             df = pd.DataFrame(list(fivesec_buffer))
             _cached_fivesec_df = df.copy()
             _cached_fivesec_hash = current_hash
-            logger.info(f"Raw kline buffer df: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'buffers'})
+            logger.debug(f"Raw kline buffer df: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'buffers'})
     if df.empty:
         return None
     df.drop_duplicates(subset=["timestamp"], inplace=True)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df.set_index("timestamp", inplace=True)
-    logger.info(f"kline DF SAMPLE:\n{sample_tail_head(df)}")
+    logger.debug(f"kline DF SAMPLE:\n{sample_tail_head(df)}")
     return df.sort_index()
 
 def get_current_orderbook_df():
@@ -60,15 +60,15 @@ def get_current_orderbook_df():
             df = pd.DataFrame(list(orderbook_buffer))
             _cached_orderbook_df = df.copy()
             _cached_orderbook_hash = current_hash
-            logger.info(f"Raw orderbook buffer df: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'buffers'})
+            logger.debug(f"Raw orderbook buffer df: shape={df.shape}, NaN={df.isna().sum().sum()}", extra={'source': 'buffers'})
     if df.empty:
         return None
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df.set_index("timestamp", inplace=True)
     logger.debug(f"get_current_orderbook_df: shape={df.shape} NaN={df.isna().sum().sum()} Inf={np.isinf(df.values).any()}")
-    logger.info(f"OB DF SAMPLE:\n{sample_tail_head(df)}")
+    logger.debug(f"OB DF SAMPLE:\n{sample_tail_head(df)}")
     repeated_mid = (df['mid_price'].diff() == 0).astype(int).groupby((df['mid_price'].diff() != 0).cumsum()).sum().max()
-    logger.info(f"OB max constant-mid run={repeated_mid}")
+    logger.debug(f"OB max constant-mid run={repeated_mid}")
     if (df['imbalance_10'].abs() > 1).any():
         logger.warning("get_current_orderbook_df: imbalance >1 detected")
     return df.sort_index()
