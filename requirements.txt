@@ -12,3 +12,5 @@ scikit_learn
 websockets
 xgboost
 lightgbm
+sortedcontainers
+dash_bootstrap_components

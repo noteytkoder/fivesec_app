@@ -4,6 +4,7 @@ auth:
   username: admin
 data:
   buffer_size: 5000
+  max_prediction_age_seconds: 3600
   csv_write_interval: 90
   download_range: 1hour
   fivesec_train_interval: 60
@@ -12,7 +13,7 @@ model:
   colsample_bytree: 0.9
   early_stopping_rounds: 20
   fivesec_max_depth: 10
-  fivesec_n_estimators: 150
+  fivesec_n_estimators: 600
   fivesec_train_window_seconds: 7200
   learning_rate: 0.03
   min_fivesec_candles: 1

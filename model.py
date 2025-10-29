@@ -119,16 +119,35 @@ class PredictorModel:
             self.feature_importances_ = self.model.feature_importances_
         elif hasattr(self.model, 'booster_'):
             self.feature_importances_ = self.model.booster_.feature_importance()
-
+            
     def predict(self, X):
         if not self.is_fitted:
             raise ValueError(f"Модель {self.model_type} не обучена.")
+
         start_time = time.time()
         if self.use_scaler:
             X = self.scaler.transform(X)
         preds = self.model.predict(X)
         latency = (time.time() - start_time) / len(X) * 1000  # мс на сэмпл
-        logger.warning(f"Задержка предсказания {self.model_type}: {latency:.4f}мс/сэмпл")
+
+        # --- пороги (можно вынести в конфиг при желании) ---
+        thresholds = {
+            "random_forest": 30.0,   # мс/сэмпл — RF обычно медленнее
+            "xgboost": 10.0,
+            "lightgbm": 8.0,
+            "default": 15.0
+        }
+
+        thr = thresholds.get(self.model_type, thresholds["default"])
+
+        if latency > thr * 3:  # критическая аномалия
+            logger.error(f"⚠️ КРИТИЧЕСКАЯ задержка {self.model_type}: {latency:.3f} мс/сэмпл (порог {thr} мс)")
+        elif latency > thr:  # просто превышение нормы
+            logger.warning(f"⏱ Высокая задержка {self.model_type}: {latency:.3f} мс/сэмпл (порог {thr} мс)")
+        elif latency > thr / 2:
+            logger.info(f"Задержка {self.model_type}: {latency:.3f} мс/сэмпл (норм.)")
+        # иначе вообще не логируем, чтобы не засорять логи
+
         return preds
 
     def score(self, X, y, metrics=['mae', 'rmse', 'r2', 'dir_acc']):
